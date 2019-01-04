@@ -7,6 +7,7 @@ slim = tf.contrib.slim
 from utils.model_utils import HannWindows,GaussianWindows
 from embeddings.convolutional_alexnet import convolutional_alexnet_arg_scope, convolutional_alexnet
 from embeddings.convolutional_alexnet_gn import convolutional_alexnet_gn_arg_scope
+from embeddings.convolutional_alexnet_m import convolutional_alexnet_m
 from embeddings.alexnet_tweak import alexnet_tweak_arg_scope, alexnet_tweak
 
 from utils.bbox_transform_utils import bbox_transform_inv
@@ -14,17 +15,12 @@ from model.generate_anchors import generate_anchor_all
 from utils.train_utils import load_mat_model
 
 class Model:
-    def __init__(self,model_config, train_config=None, mode='train'):
+    def __init__(self,model_config, train_config=None, mode='train', inputs=[]):
         self.model_config = model_config
         self.train_config = train_config
         self.mode = mode
         assert mode in ['train', 'validation', 'inference']
-
-        if self.mode == 'train':
-            self.data_config = self.train_config['train_data_config']
-        elif self.mode == 'validation':
-            self.data_config = self.train_config['validation_data_config']
-
+        
         ratios = [0.33, 0.5, 1.0, 2.0, 3.0]
         anchor_sizes = [64]
         self.embed_dim = 256
@@ -44,18 +40,20 @@ class Model:
         elif config['embedding_name']== 'convolutional_alexnet_gn':
             self.arg_scope = convolutional_alexnet_gn_arg_scope(config, trainable=config['train_embedding'])
             self.backbone_fn = convolutional_alexnet
+        elif config['embedding_name'] == 'convolutional_alexnet_m':
+           self.backbone_fn = convolutional_alexnet_m
+           self.arg_scope = convolutional_alexnet_arg_scope(config, trainable=config['train_embedding'], is_training=self.is_training())
         elif config['embedding_name'] == 'alexnet_tweak':
             self.arg_scope = alexnet_tweak_arg_scope(config, trainable=config['train_embedding'], is_training=self.is_training())
             self.backbone_fn = alexnet_tweak
         else:
             assert("support alexnet only now")
 
-        self.dataloader = None
+        self.inputs=inputs
         self.examplars = None
         self.instances = None
         self.batch_loss = None
         self.total_loss = None
-        self.global_step = None
 
     # template build network process
     def build(self, reuse=False):
@@ -75,9 +73,7 @@ class Model:
             else:
                 self.get_topk_preds(top_num=-1)
 
-            if self.is_training():
-                self.setup_global_step()
-    # Step 1. set up dataloader and build input, this may varies due to differtent varient methods
+    # Step 1.build input, this may varies due to differtent varient methods
     # Leave it blank
     def build_inputs(self):
         pass
@@ -129,7 +125,7 @@ class Model:
                 self.pred_boxes = tf.map_fn(lambda x: _translation_match(x[0], x[1]),
                                     (reg_feats_x, reg_feats_z), dtype=reg_feats_x.dtype)
 
-                if hasattr(self.model_config, "adjust_regression") and self.model_config['adjust_regression']:
+                if self.model_config['adjust_regression']:
                     batch_num = tf.shape(self.examplar_embeds)[0]
                     feat_size = self.model_config["field_size"]
                     feat_dim = self.anchor_nums_per_location * 4
@@ -190,10 +186,13 @@ class Model:
     def build_template(self):
         self.templates = self.examplar_embeds
 
-    def restore_weights_from_checkpoint(self, sess):
+    def restore_weights_from_checkpoint(self, sess, step=-1):
         checkpoint_path = self.model_config['checkpoint']
         if os.path.isdir(checkpoint_path):
-            checkpoint_path = tf.train.latest_checkpoint(checkpoint_path)
+            if step==-1:
+                checkpoint_path = tf.train.latest_checkpoint(checkpoint_path)
+            else:
+                checkpoint_path = os.path.join(checkpoint_path, "model.ckpt-%d"%(step))
             if not checkpoint_path:
                 print("No checkpoint file found in: {}".format(checkpoint_path))
             else:
@@ -215,13 +214,6 @@ class Model:
             sess.run([initialize])
           self.init_fn = restore_fn
 
-    def setup_global_step(self):
-        global_step = tf.Variable(
-            initial_value=0,
-            name='global_step',
-            trainable=False,
-            collections=[tf.GraphKeys.GLOBAL_STEP, tf.GraphKeys.GLOBAL_VARIABLES])
-        self.global_step = global_step
     def is_training(self):
         return self.mode == 'train'
 

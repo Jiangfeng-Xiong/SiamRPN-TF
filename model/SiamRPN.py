@@ -8,24 +8,22 @@ from utils.model_utils import BinWindows
 from model.generate_anchors import get_rpn_label
 from model.Model import Model
 
-from dataloader.DataLoader import DataLoader
-
 class SiamRPN(Model):
     def build_inputs(self):
-        if self.mode in ['train', 'validation']:
-            with tf.device("/cpu:0"):  # Put data loading and preprocessing in CPU is substantially faster
-                self.dataloader = DataLoader(self.data_config, self.is_training())
-                self.dataloader.build()
-                examplars, instances, gt_examplar_boxes, gt_instance_boxes = self.dataloader.get_one_batch()
-                
+        if len(self.inputs) > 0:
+            with tf.device("/cpu:0"):  
+                examplars, instances, gt_examplar_boxes, gt_instance_boxes = self.inputs[0],self.inputs[1],self.inputs[2],self.inputs[3]
+
                 def single_img_gt(anchors_tf, gt_box):
                     return tf.py_func(get_rpn_label, [anchors_tf, tf.reshape(gt_box,[-1,4])],[tf.float32,tf.int32],name="single_img_gt")
 
+                gpu_list = self.train_config['%s_data_config'%(self.mode)].get('gpu_ids','0')
+                num_gpus = len(gpu_list.split(','))
+                batch_size = self.train_config['%s_data_config'%(self.mode)]['batch_size'] // num_gpus
+                
                 bbox_gts, labels = tf.map_fn(lambda x: single_img_gt(x[0],x[1]),
-                    [tf.tile(self.anchors_tf,[self.train_config['train_data_config']['batch_size'],1,1]),gt_instance_boxes],
+                    [tf.tile(self.anchors_tf,[batch_size,1,1]),gt_instance_boxes],
                     dtype=[tf.float32, tf.int32])
-
-                batch_size = self.train_config['%s_data_config'%(self.mode)]['batch_size']
                 
                 bbox_gts.set_shape([batch_size,None,4])
                 labels.set_shape([batch_size,None])
@@ -81,7 +79,12 @@ class SiamRPN(Model):
 if __name__ == "__main__":
     from model.config import MODEL_CONFIG,TRAIN_CONFIG
     os.environ['CUDA_VISIBLE_DEVICES']="9"
-    m = SiamRPN(MODEL_CONFIG,TRAIN_CONFIG)
+
+    train_dataloader = DataLoader(TRAIN_CONFIG['train_data_config'], is_training=True)
+    train_dataloader.build()
+    inputs = train_dataloader.get_one_batch()
+
+    m = SiamRPN(MODEL_CONFIG,TRAIN_CONFIG, inputs)
     m.build()
     global_variables_init_op = tf.global_variables_initializer()
 

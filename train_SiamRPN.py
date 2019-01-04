@@ -11,8 +11,10 @@ import tensorflow as tf
 from sacred import Experiment
 from sacred.observers import FileStorageObserver
 from utils.misc_utils import auto_select_gpu, mkdir_p, save_cfgs
-from utils.train_utils import print_trainable
+from utils.train_utils import print_trainable, average_gradients
 from configs import get_model,get_config
+
+from dataloader.DataLoader import DataLoader
 
 #config_name = "SiamRPN_bn_bz8_reg10"
 config_name = input("Input config name : ")
@@ -70,10 +72,21 @@ def _configure_optimizer(train_config, learning_rate):
     raise ValueError('Optimizer [%s] was not recognized', optimizer_config['optimizer'])
   return optimizer
 
+def tower_model(Model, inputs, model_config, train_config, mode='train'):
+    model = Model(model_config, train_config, mode=mode, inputs=inputs)
+    model.build()
+    return model
 
 @ex.automain
 def main(model_config, train_config, track_config):
-  os.environ['CUDA_VISIBLE_DEVICES'] = auto_select_gpu()
+
+  # GPU Config 
+  gpu_list = train_config['train_data_config'].get('gpu_ids','0')
+  num_gpus = len(gpu_list.split(','))
+  if num_gpus>1:
+    os.environ['CUDA_VISIBLE_DEVICES'] = gpu_list
+  else:
+    os.environ['CUDA_VISIBLE_DEVICES'] = auto_select_gpu()
 
   # Create training directory which will be used to save: configurations, model files, TensorBoard logs
   train_dir = train_config['train_dir']
@@ -88,20 +101,31 @@ def main(model_config, train_config, track_config):
     np.random.seed(train_config['seed'])
     tf.set_random_seed(train_config['seed'])
 
-    # Build the training and validation model
+    #Build global step
+    with tf.name_scope('train/'):
+        global_step = tf.Variable(initial_value=0,name='global_step', trainable=False,
+          collections=[tf.GraphKeys.GLOBAL_STEP, tf.GraphKeys.GLOBAL_VARIABLES])    
+    
     Model = get_model(model_config['Model'])
-    model = Model(model_config, train_config, mode='train')
-    model.build()
-    model_va = Model(model_config, train_config, mode='validation')
-    model_va.build(reuse=True)
 
+    # build training dataloader and validation dataloader
+    #---train
+    train_dataloader = DataLoader(train_config['train_data_config'], is_training=True)
+    train_dataloader.build()
+    train_inputs = train_dataloader.get_one_batch()
+
+    #---validation
+    val_dataloader = DataLoader(train_config['validation_data_config'], is_training=False)
+    val_dataloader.build()
+    val_inputs = val_dataloader.get_one_batch()
+    
     # Save configurations for future reference
     save_cfgs(train_dir, model_config, train_config, track_config)
 
-    lr = _configure_learning_rate(train_config, model.global_step)
+    lr = _configure_learning_rate(train_config, global_step)
 
     if model_config.get('lr_warmup', False):
-      learning_rate = tf.cond(tf.less(model.global_step, 15000), lambda: lr/10.0, lambda: tf.identity(lr))
+      learning_rate = tf.cond(tf.less(global_step, int(train_config['train_data_config']['num_examples_per_epoch'])), lambda: lr/10.0, lambda: tf.identity(lr))
     else:
       learning_rate = lr
 
@@ -109,23 +133,33 @@ def main(model_config, train_config, track_config):
     tf.summary.scalar('learning_rate', learning_rate)
 
     # Set up the training ops
-    if model_config['embed_config']['embedding_checkpoint_file'] == None:
-      opt_op = tf.contrib.layers.optimize_loss( loss=model.total_loss, global_step=model.global_step,
-      learning_rate=learning_rate, optimizer=optimizer, clip_gradients=train_config['clip_gradients'],
-      learning_rate_decay_fn=None, summaries=['learning_rate'])
-    else: 
-      logging.info("fixed conv1/conv2/conv3 totally 12 trainable parameters")
-      variables = tf.trainable_variables()
-      opt_op = tf.contrib.layers.optimize_loss(loss=model.total_loss, global_step=model.global_step,
-      learning_rate=learning_rate, optimizer=optimizer, clip_gradients=train_config['clip_gradients'],
-      learning_rate_decay_fn=None, summaries=['learning_rate'], variables= variables[12:])
-
-    with tf.control_dependencies([opt_op]):
-      train_op = tf.no_op(name='train')
-    #update_op = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
-    #with tf.control_dependencies(update_op):
-    #  train_op = tf.identity(opt_op)
-
+    examplars, instances, gt_examplar_boxes, gt_instance_boxes = tf.split(train_inputs[0],num_gpus), \
+                                                                 tf.split(train_inputs[1],num_gpus), \
+                                                                 tf.split(train_inputs[2],num_gpus), \
+                                                                 tf.split(train_inputs[3],num_gpus)
+    tower_grads = []
+    with tf.variable_scope(tf.get_variable_scope()):
+      for i in range(num_gpus):
+        with tf.device('/gpu:%d' % i):
+          inputs = [examplars[i], instances[i], gt_examplar_boxes[i], gt_instance_boxes[i]]
+          model = tower_model(Model, inputs, model_config, train_config, mode='train')
+          # Reuse variables for the next tower.
+          tf.get_variable_scope().reuse_variables()
+          grads = optimizer.compute_gradients(model.total_loss)
+          tower_grads.append(grads)
+    grads = average_gradients(tower_grads)
+    
+    #Clip gradient
+    gradients, tvars = zip(*grads)
+    clip_gradients, _ = tf.clip_by_global_norm(gradients, train_config['clip_gradients'])
+    train_op = optimizer.apply_gradients(zip(clip_gradients, tvars),global_step=global_step)
+    
+    #Build validation model
+    with tf.device('/gpu:0'): 
+        model_va = Model(model_config, train_config, mode='validation', inputs=val_inputs)
+        model_va.build(reuse=True)
+    
+    #Save Model setup
     saver = tf.train.Saver(tf.global_variables(),
                            max_to_keep=train_config['max_checkpoints_to_keep'])
 
@@ -138,29 +172,28 @@ def main(model_config, train_config, track_config):
 
     # Dynamically allocate GPU memory
     gpu_options = tf.GPUOptions(allow_growth=True)
-    sess_config = tf.ConfigProto(gpu_options=gpu_options)
+    sess_config = tf.ConfigProto(gpu_options=gpu_options, allow_soft_placement=True)
     #inter_op_parallelism_threads = 16, intra_op_parallelism_threads = 16, log_device_placement=True)
 
     sess = tf.Session(config=sess_config)
     model_path = tf.train.latest_checkpoint(train_config['train_dir'])
     
-    
     if not model_path:
       sess.run(global_variables_init_op)
       sess.run(local_variables_init_op)
       start_step = 0
-      
-      if model_config['embed_config']['embedding_checkpoint_file']:
-        model.init_fn(sess)
+      #if model_config['embed_config']['embedding_checkpoint_file']:
+      #  model.init_fn(sess)
     else:
       logging.info('Restore from last checkpoint: {}'.format(model_path))
       sess.run(local_variables_init_op)
-      saver.restore(sess, model_path)
-      start_step = tf.train.global_step(sess, model.global_step.name) + 1
+      sess.run(global_variables_init_op)
+      #saver.restore(sess, model_path)
+      restore_op = tf.contrib.slim.assign_from_checkpoint_fn(model_path, tf.global_variables(), ignore_missing_vars=True)
+      restore_op(sess)
+      start_step = tf.train.global_step(sess, global_step.name) + 1
 
-    #help function, can be disenable
-    print_trainable(sess)
-
+    print_trainable(sess) #help function, can be disenable
     g.finalize()  # Finalize graph to avoid adding ops by mistake
 
     # Training loop
@@ -170,24 +203,32 @@ def main(model_config, train_config, track_config):
                       data_config['batch_size'])
     logging.info('Train for {} steps'.format(total_steps))
     for step in range(start_step, total_steps):
-      start_time = time.time()
-      _, loss, batch_loss = sess.run([train_op, model.total_loss, model.batch_loss])
-      duration = time.time() - start_time
+      try: 
+        start_time = time.time()
+        _, loss, batch_loss = sess.run([train_op, model.total_loss, model.batch_loss])
+        duration = time.time() - start_time
 
-      if step % 10 == 0:
-        examples_per_sec = data_config['batch_size'] / float(duration)
-        time_remain = data_config['batch_size'] * (total_steps - step) / examples_per_sec
-        m, s = divmod(time_remain, 60)
-        h, m = divmod(m, 60)
-        format_str = ('%s: step %d, total loss = %.3f, batch loss = %.3f (%.1f examples/sec; %.3f '
-                      'sec/batch; %dh:%02dm:%02ds remains)')
-        logging.info(format_str % (datetime.now(), step, loss, batch_loss,
-                                   examples_per_sec, duration, h, m, s))
+        if step % 10 == 0:
+          examples_per_sec = data_config['batch_size'] / float(duration)
+          time_remain = data_config['batch_size'] * (total_steps - step) / examples_per_sec
+          m, s = divmod(time_remain, 60)
+          h, m = divmod(m, 60)
+          format_str = ('%s: step %d, total loss = %.3f, batch loss = %.3f (%.1f examples/sec; %.3f '
+                        'sec/batch; %dh:%02dm:%02ds remains)')
+          logging.info(format_str % (datetime.now(), step, loss, batch_loss,
+                                     examples_per_sec, duration, h, m, s))
 
-      if step % 500 == 0:
-        summary_str = sess.run(summary_op)
-        summary_writer.add_summary(summary_str, step)
+        if step % 500 == 0:
+          summary_str = sess.run(summary_op)
+          summary_writer.add_summary(summary_str, step)
 
-      if step % train_config['save_model_every_n_step'] == 0 or (step + 1) == total_steps:
-        checkpoint_path = osp.join(train_config['train_dir'], 'model.ckpt')
-        saver.save(sess, checkpoint_path, global_step=step)
+        if step % train_config['save_model_every_n_step'] == 0 or (step + 1) == total_steps:
+          checkpoint_path = osp.join(train_config['train_dir'], 'model.ckpt')
+          saver.save(sess, checkpoint_path, global_step=step)
+      except KeyboardInterrupt:
+          checkpoint_path = osp.join(train_config['train_dir'], 'model.ckpt')
+          saver.save(sess, checkpoint_path, global_step=step)
+          print("save model.ckpt-%d"%(step))
+          break
+      except:
+        print("Error found in current step, continue")

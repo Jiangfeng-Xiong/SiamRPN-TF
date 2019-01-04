@@ -7,7 +7,6 @@ Model = "SiamRPN"
 batch_size=64
 base_lr = 0.1*(batch_size/64.0)
 embedding_checkpoint_file=None
-adjust_regression=True
 LOG_DIR = "Logs/%s"%(RUN_NAME)
 regloss_lambda = 10.0
 
@@ -29,8 +28,8 @@ MODEL_CONFIG = {
                    'weight_decay': 1e-4,
                    'stride': 8, },
   'Model': Model,
-  'adjust_regression': adjust_regression,
-  'lr_warmup': False
+  'adjust_regression': False,
+  'lr_warmup': True
 }
 
 TRAIN_CONFIG = {
@@ -38,19 +37,23 @@ TRAIN_CONFIG = {
   'seed': 123,  # fix seed for reproducing experiments
   'npairs_loss_weight': 1e-2,
   'train_data_config': {'input_imdb': 'dataset/TrackingNet_DET2014/train.pickle',
+						'lmdb_path': 'dataset/TrackingNet_DET2014/train_lmdb_encode',
+						'lmdb_encode': True,
                         'num_examples_per_epoch': 1e6, #
-                        'epoch': 50,
+                        'epoch': 65,
                         'batch_size':batch_size,
                         'max_frame_dist': 100,  # Maximum distance between any two random frames draw from videos.
-                        'prefetch_threads': 16,
+                        'prefetch_threads': 32,
                         'prefetch_capacity': 100 * batch_size,# The maximum elements number in the data loading queue
                         'augmentation_config':{'random_flip': True, 'random_color': True,'random_blur': True}
                         },  
   'validation_data_config': {'input_imdb': 'dataset/TrackingNet_DET2014/validation.pickle',
-                             'batch_size': batch_size,
+							'lmdb_path': 'dataset/TrackingNet_DET2014/validation_lmdb_encode',
+							'lmdb_encode': True,
+                             'batch_size': 8,
                              'max_frame_dist': 100,  # Maximum distance between any two random frames draw from videos.
-                             'prefetch_threads': 16,
-                             'prefetch_capacity': 100 * batch_size, },  # The maximum elements number in the data loading queue
+                             'prefetch_threads': 32,
+                             'prefetch_capacity': 100 * 8, },  # The maximum elements number in the data loading queue
 
   # Optimizer for training the model.
   'optimizer_config': {'optimizer': 'MOMENTUM',  # SGD and MOMENTUM and Adam are supported

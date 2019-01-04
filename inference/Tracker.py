@@ -5,6 +5,16 @@ import os
 from tqdm import tqdm
 import time
 
+
+Project_root="/home/lab-xiong.jiangfeng/Projects/SiameseRPN"
+
+def safe_imread(filename):
+    bgr_img = cv2.imread(filename)
+    while isinstance(bgr_img, type(None)):
+        print("load %s failed, reload"%(filename))
+        bgr_img = cv2.imread(filename)
+    return bgr_img
+
 class TargetState(object):
   def __init__(self, bbox):
     self.search_box = bbox #(cx, cy, w, h) in the original image
@@ -24,14 +34,12 @@ class Tracker(object):
     self.x_image_size = track_config['x_image_size']  # Search image size
     self.log_level = track_config['log_level']
     self.conf_threshold = 0.01
-    self.show_tracking=True
+    self.save_video=True
     self.auto_increase=False
 
-
   def track_init(self, first_bbox, first_frame_image_path):
-    print(first_bbox,first_frame_image_path)
-
-    first_frame_image = cv2.cvtColor(cv2.imread(first_frame_image_path), cv2.COLOR_BGR2RGB)
+    print(first_frame_image_path)
+    first_frame_image = cv2.cvtColor(safe_imread(first_frame_image_path), cv2.COLOR_BGR2RGB)
     self.first_frame_image = first_frame_image
 
     self.first_bbox = convert_bbox_format(Rectangle(first_bbox[0],first_bbox[1],first_bbox[2],first_bbox[3]), 'center-based')
@@ -43,12 +51,15 @@ class Tracker(object):
 
     self.img_height,self.img_width,_ = first_frame_image.shape
 
-    if self.show_tracking:
+    if self.save_video:
       video_name = first_frame_image_path.split('/')[-3]+'.mp4'
       fourcc = cv2.VideoWriter_fourcc('m', 'p', '4', 'v')
-      result_dir = os.path.join("/home/lab-xiong.jiangfeng/temp",video_name)
-      print("save video into %s"%(result_dir))
-      self.video = cv2.VideoWriter(result_dir, fourcc, 30, (self.img_width,self.img_height))
+      result_dir = os.path.join(Project_root,self.track_config['log_dir'])
+      if not os.path.exists(result_dir):
+        os.makedirs(result_dir)
+      video_path = os.path.join(result_dir, video_name)
+      print("save video into %s"%(video_path))
+      self.video = cv2.VideoWriter(video_path, fourcc, 30, (self.img_width,self.img_height))
 
     def center_crop(img):
       img_shape = np.shape(img)
@@ -72,12 +83,6 @@ class Tracker(object):
     self.current_target_state = TargetState(bbox=self.first_bbox)
     self.window = np.tile(np.outer(np.hanning(17), np.hanning(17)).flatten(),5)
 
-    #if self.show_tracking:
-    #  show_target = self.first_image_examplar.copy()
-    #  cv2.rectangle(show_target,(int(x1),int(y1)),(int(x2),int(y2)),(0,255,0),2)
-      #cv2.imshow("target",show_target)
-      #cv2.waitKey(1)
-
   def track(self, first_bbox,frames,bSaveImage=False,SavePath='/tmp'):
     #1. init the tracker
     self.track_init(first_bbox, frames[0])
@@ -90,7 +95,7 @@ class Tracker(object):
     for i, filename in tqdm(enumerate(frames)):
       if i > 0 or include_first:  # We don't really want to process the first image unless intended to do so.
         load_img_start = time.time()
-        bgr_img = cv2.imread(filename)
+        bgr_img = safe_imread(filename)
         load_img_end = time.time()
         cost_time_dict['load_img'] += load_img_end - load_img_start
 
@@ -160,11 +165,10 @@ class Tracker(object):
         #save and show tracking process
         if bSaveImage:
           cv2.imwrite(SavePath+"/"+os.path.basename(frames[i]), bgr_img)
-        elif self.show_tracking:
+        elif self.save_video:
           x1,y1,x2,y2 = bbox_to_corrdinate(self.current_target_state.search_box)
           cv2.rectangle(bgr_img,(int(x1),int(y1)),(int(x2),int(y2)),(0,255,0),2)
           cv2.putText(bgr_img, "%.2f"%(scores[max_index]), (int(x1),int(y1)), 0, 1, (0,255,0),2)
-          #cv2.imshow("Tracker",bgr_img)
           self.video.write(bgr_img)
         else:
           pass

@@ -1,5 +1,6 @@
 import tensorflow as tf
 import numpy as np
+import cv2
 
 import os,sys
 CURRENT_DIR = os.path.dirname(__file__)
@@ -17,12 +18,12 @@ class DataLoader(object):
     self.instance_size = 255
     self.dataset_py = Sampler(config['input_imdb'], config['max_frame_dist'])
     
-    shuffle = False if self.config.get('lmdb_path', None) else is_training
+    #shuffle = False if self.config.get('lmdb_path', None) else is_training
     self.sampler = ShuffleSample(self.dataset_py, shuffle=is_training)
 
     if self.config.get('lmdb_path', None):
       import lmdb
-      env = lmdb.open(self.config['lmdb_path'],map_size = 109951162777*6)
+      env = lmdb.open(self.config['lmdb_path'],map_size = 109951162777)
       self.txn = env.begin()
 
   def examplar_transform(self, input_image, gt_examplar_box):
@@ -80,9 +81,12 @@ class DataLoader(object):
           print("%s not found in database, continue"%(key))
           return None
         img_buffer = np.frombuffer(buffer, dtype=np.uint8)
-        img_size = int(np.sqrt(len(img_buffer)/3))
-        value = np.reshape(img_buffer, [img_size, img_size, 3])
-        return value
+        if self.config.get('lmdb_encode', False):
+            image = cv2.imdecode(img_buffer, cv2.IMREAD_COLOR)
+        else:
+            img_size = int(np.sqrt(len(img_buffer)/3))
+            image = np.reshape(img_buffer, [img_size, img_size, 3])
+        return image
        
       if self.config.get('lmdb_path', None):
         exemplar_image = tf.py_func(get_bytes_from_lmdb, [img_paths[0]], tf.uint8, name = "exemplar_image")
@@ -140,12 +144,14 @@ if __name__ == "__main__":
 
   import cv2
   config={}
-  config['input_imdb']="dataset/LASOT_DET2014/validation.pickle"
+  config['input_imdb']="dataset/LASOT_DET2014/train.pickle"
   config['max_frame_dist']=100
   config['prefetch_threads'] = 8
   config['prefetch_capacity'] = 8
   config['batch_size'] = 1
-  config['lmdb_path'] = 'dataset/LASOT_DET2014/validation_lmdb'
+  config['lmdb_path'] = 'dataset/LASOT_DET2014/train_lmdb_encode'
+  config['lmdb_encode'] = True
+  
   os.environ['CUDA_VISIBLE_DEVICES']=""
 
   with tf.device('/cpu:0'):
