@@ -5,14 +5,11 @@ import os
 slim = tf.contrib.slim
 
 from utils.model_utils import HannWindows,GaussianWindows
-from embeddings.convolutional_alexnet import convolutional_alexnet_arg_scope, convolutional_alexnet
-from embeddings.convolutional_alexnet_gn import convolutional_alexnet_gn_arg_scope
-from embeddings.convolutional_alexnet_m import convolutional_alexnet_m
-from embeddings.alexnet_tweak import alexnet_tweak_arg_scope, alexnet_tweak
-
 from utils.bbox_transform_utils import bbox_transform_inv
 from model.generate_anchors import generate_anchor_all
-from utils.train_utils import load_mat_model
+from utils.train_utils import load_pickle_model
+from embeddings import get_scope_and_backbone
+
 
 class Model:
     def __init__(self,model_config, train_config=None, mode='train', inputs=[]):
@@ -32,23 +29,9 @@ class Model:
                                            field_size=model_config['field_size'], net_shift=model_config['net_shift'])
         self.anchors_tf = tf.reshape(tf.convert_to_tensor(self.anchors, tf.float32), [1, -1, 4])
 
-        #Init network backbone and argscope, use alexnet as default
         config = self.model_config['embed_config']
-        if config['embedding_name']== 'convolutional_alexnet':
-            self.arg_scope = convolutional_alexnet_arg_scope(config, trainable=config['train_embedding'], is_training=self.is_training())
-            self.backbone_fn = convolutional_alexnet
-        elif config['embedding_name']== 'convolutional_alexnet_gn':
-            self.arg_scope = convolutional_alexnet_gn_arg_scope(config, trainable=config['train_embedding'])
-            self.backbone_fn = convolutional_alexnet
-        elif config['embedding_name'] == 'convolutional_alexnet_m':
-           self.backbone_fn = convolutional_alexnet_m
-           self.arg_scope = convolutional_alexnet_arg_scope(config, trainable=config['train_embedding'], is_training=self.is_training())
-        elif config['embedding_name'] == 'alexnet_tweak':
-            self.arg_scope = alexnet_tweak_arg_scope(config, trainable=config['train_embedding'], is_training=self.is_training())
-            self.backbone_fn = alexnet_tweak
-        else:
-            assert("support alexnet only now")
-
+        self.arg_scope, self.backbone_fn = get_scope_and_backbone(config, self.is_training())
+        
         self.inputs=inputs
         self.examplars = None
         self.instances = None
@@ -60,8 +43,7 @@ class Model:
         with tf.name_scope(self.mode):
             self.build_inputs()
             self.build_image_embeddings(reuse=reuse)
-            train_scope = convolutional_alexnet_arg_scope(self.model_config['embed_config'], trainable=True, is_training=self.is_training())
-            with slim.arg_scope(train_scope):
+            with slim.arg_scope(self.arg_scope):
                 self.build_cls_branch(reuse=reuse)
                 self.build_reg_branch(reuse=reuse)
             self.setup_embedding_init()
@@ -108,7 +90,7 @@ class Model:
 
         self.pred_probs = tf.reshape(self.pred_probs, [-1, num_of_anchors, 2])  # N*Na*2
         self.pred_scores = tf.reshape(tf.nn.softmax(tf.reshape(self.pred_probs, [-1, 2])), tf.shape(self.pred_probs))
-
+        
     def build_reg_branch(self, reuse):
         with tf.variable_scope('regssion', reuse=reuse):
             with slim.arg_scope([slim.conv2d], activation_fn=None, normalizer_fn=None):
@@ -205,9 +187,7 @@ class Model:
     def setup_embedding_init(self):
         embed_config = self.model_config['embed_config']
         if embed_config['embedding_checkpoint_file']:
-          # Restore Siamese FC models from .mat model files
-          initialize = load_mat_model(embed_config['embedding_checkpoint_file'],
-                                      'convolutional_alexnet/')
+          initialize = load_pickle_model()
           def restore_fn(sess):
             tf.logging.info("Restoring embedding variables from checkpoint file %s",
                             embed_config['embedding_checkpoint_file'])

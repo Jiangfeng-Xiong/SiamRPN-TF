@@ -44,7 +44,7 @@ TRAIN_CONFIG = {
                         'batch_size':batch_size,
                         'max_frame_dist': 100,  # Maximum distance between any two random frames draw from videos.
                         'prefetch_threads': 32,
-                        'prefetch_capacity': 100 * batch_size,# The maximum elements number in the data loading queue
+                        'prefetch_capacity': 500 * batch_size,# The maximum elements number in the data loading queue
                         'augmentation_config':{'random_flip': True, 'random_color': True,'random_blur': True}
                         },  
   'validation_data_config': {'input_imdb': 'dataset/TrackingNet_DET2014/validation.pickle',
@@ -52,8 +52,8 @@ TRAIN_CONFIG = {
 							'lmdb_encode': True,
                              'batch_size': 8,
                              'max_frame_dist': 100,  # Maximum distance between any two random frames draw from videos.
-                             'prefetch_threads': 32,
-                             'prefetch_capacity': 100 * 8, },  # The maximum elements number in the data loading queue
+                             'prefetch_threads': 8,
+                             'prefetch_capacity': 8, },  # The maximum elements number in the data loading queue
 
   # Optimizer for training the model.
   'optimizer_config': {'optimizer': 'MOMENTUM',  # SGD and MOMENTUM and Adam are supported
@@ -64,7 +64,7 @@ TRAIN_CONFIG = {
   'lr_config': {'policy': 'exponential',
                 'initial_lr': base_lr,
                 'num_epochs_per_decay': 1,
-                'lr_decay_factor': 0.8685, #0.001^(1/(num_epoch-1))=0.8685 for sgd or 0.1^((1/num_epoch-1_)=0.954 for adam
+                'lr_decay_factor': 0.001**(1.0/50.0), #0.001^(1/(num_epoch-1))=0.8685 for sgd or 0.1^((1/num_epoch-1_)=0.954 for adam
                 'staircase': True, },
 
   # If not None, clip gradients to this value.
@@ -86,9 +86,7 @@ TRACK_CONFIG = {
 
   # Logging level of inference, use 1 for detailed inspection. 0 for speed.
   'log_level': 0,
-
   'x_image_size': 255,  # Search image size during tracking
-
   'search_scale_smooth_factor': 0.3,
   'penalty_k': 0.22,
   'window_influence': 0.4,

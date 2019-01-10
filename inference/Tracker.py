@@ -5,7 +5,6 @@ import os
 from tqdm import tqdm
 import time
 
-
 Project_root="/home/lab-xiong.jiangfeng/Projects/SiameseRPN"
 
 def safe_imread(filename):
@@ -31,25 +30,30 @@ class Tracker(object):
     self.model = model
     self.sess = sess
     self.track_config = track_config
+    self.model_config = model.model_config
     self.x_image_size = track_config['x_image_size']  # Search image size
+    self.z_image_size = track_config.get('z_image_size', 127)
+    self.score_size = (self.x_image_size - self.z_image_size)//(model.model_config['embed_config']['stride']) + 1
     self.log_level = track_config['log_level']
-    self.conf_threshold = 0.01
-    self.save_video=True
+    self.conf_threshold = 0.05
+    self.image_use_rgb = True
+    self.save_video=False
+    self.show_video=False
     self.auto_increase=False
 
   def track_init(self, first_bbox, first_frame_image_path):
     print(first_frame_image_path)
-    first_frame_image = cv2.cvtColor(safe_imread(first_frame_image_path), cv2.COLOR_BGR2RGB)
-    self.first_frame_image = first_frame_image
-
+    first_frame_image = safe_imread(first_frame_image_path)
+    self.first_frame_image = cv2.cvtColor(first_frame_image, cv2.COLOR_BGR2RGB) if self.image_use_rgb else first_frame_image
+        
     self.first_bbox = convert_bbox_format(Rectangle(first_bbox[0],first_bbox[1],first_bbox[2],first_bbox[3]), 'center-based')
-    first_image_crop, _, target_size= get_crops(first_frame_image, self.first_bbox, 127, 255, 0.5)
+    first_image_crop, _, target_size= get_crops(self.first_frame_image, self.first_bbox, self.z_image_size, self.x_image_size, 0.5)
 
-    cx = (255-1)/2.0
-    cy = (255-1)/2.0
+    cx = (self.x_image_size-1)/2.0
+    cy = (self.x_image_size-1)/2.0
     gt_examplar_box = np.array([cx - target_size[0]/2.0, cy - target_size[1]/2.0, cx + target_size[0]/2.0, cy + target_size[1]/2.0],np.float32)
 
-    self.img_height,self.img_width,_ = first_frame_image.shape
+    self.img_height,self.img_width,_ = self.first_frame_image.shape
 
     if self.save_video:
       video_name = first_frame_image_path.split('/')[-3]+'.mp4'
@@ -72,7 +76,7 @@ class Tracker(object):
       return croped_img
     self.first_image_examplar = center_crop(first_image_crop)
 
-    shift_y = (255 - 127)//2
+    shift_y = (self.x_image_size - self.z_image_size)//2
     shift_x = shift_y
     x1 = gt_examplar_box[0] - shift_x
     y1 = gt_examplar_box[1] - shift_y
@@ -81,7 +85,7 @@ class Tracker(object):
     self.gt_examplar_box = np.reshape(np.array([x1, y1 ,x2 ,y2]),[1,4])
 
     self.current_target_state = TargetState(bbox=self.first_bbox)
-    self.window = np.tile(np.outer(np.hanning(17), np.hanning(17)).flatten(),5)
+    self.window = np.tile(np.outer(np.hanning(self.score_size), np.hanning(self.score_size)).flatten(),5) #5 is the number of aspect ratio anchors
 
   def track(self, first_bbox,frames,bSaveImage=False,SavePath='/tmp'):
     #1. init the tracker
@@ -89,7 +93,7 @@ class Tracker(object):
     include_first = self.track_config['include_first']
     # Run tracking loop
     reported_bboxs = []
-    examplar = np.reshape(self.first_image_examplar,[1,127,127,3])
+    examplar = np.reshape(self.first_image_examplar,[1,self.z_image_size,self.z_image_size,3])
 
     cost_time_dict={'load_img': 0.0, 'crop_img': 0.0, 'sess_run': 0.0, 'post_process':0.0}
     for i, filename in tqdm(enumerate(frames)):
@@ -98,11 +102,11 @@ class Tracker(object):
         bgr_img = safe_imread(filename)
         load_img_end = time.time()
         cost_time_dict['load_img'] += load_img_end - load_img_start
-
         crop_img_start = time.time()
-        rgb_img = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2RGB)
-        instance_img, scale_x, _= get_crops(rgb_img, self.current_target_state.search_box, 127, 255, 0.5)
-        instance = np.reshape(instance_img, [1,255,255,3])
+        
+        current_img = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2RGB) if self.image_use_rgb else bgr_img
+        instance_img, scale_x, _= get_crops(current_img, self.current_target_state.search_box, self.z_image_size, self.x_image_size, 0.5)
+        instance = np.reshape(instance_img, [1,self.x_image_size, self.x_image_size,3])
         crop_img_end = time.time()
         cost_time_dict['crop_img'] += crop_img_end - crop_img_start
 
@@ -116,7 +120,7 @@ class Tracker(object):
         post_process_start = time.time()
         #boxes: 1*NA*4 score: 1*Na
         boxes = boxes[0] #NA*4
-        scores = scores[0]
+        scores = scores[0] #NA*2
         scales = np.sqrt((boxes[:,2] - boxes[:,0])*(boxes[:,3]-boxes[:,1]))/scale_x #Na
         ratios = (boxes[:,3]-boxes[:,1])/(boxes[:,2] - boxes[:,0])
 
@@ -136,8 +140,12 @@ class Tracker(object):
 
         # Position within frame in frame coordinates
         res_box = Rectangle(*corrdinate_to_bbox(corrdinates))
-        delta_x = (res_box.x - 127.0)/scale_x
-        delta_y = (res_box.y - 127.0)/scale_x
+        center_x = (self.x_image_size -1.0)/2
+        center_y = center_x
+
+        delta_x = (res_box.x - center_x)/scale_x
+        delta_y = (res_box.y - center_y)/scale_x
+
         w = res_box.width/scale_x
         h = res_box.height/scale_x
         y = self.current_target_state.target_box.y + delta_y
@@ -170,6 +178,12 @@ class Tracker(object):
           cv2.rectangle(bgr_img,(int(x1),int(y1)),(int(x2),int(y2)),(0,255,0),2)
           cv2.putText(bgr_img, "%.2f"%(scores[max_index]), (int(x1),int(y1)), 0, 1, (0,255,0),2)
           self.video.write(bgr_img)
+        elif self.show_video:
+          x1,y1,x2,y2 = bbox_to_corrdinate(self.current_target_state.search_box)
+          cv2.rectangle(bgr_img,(int(x1),int(y1)),(int(x2),int(y2)),(0,255,0),2)
+          cv2.putText(bgr_img, "%.2f"%(scores[max_index]), (int(x1),int(y1)), 0, 1, (0,255,0),2)
+          cv2.imshow("Tracker", bgr_img)
+          cv2.waitKey(10)
         else:
           pass
         post_process_end = time.time()
@@ -177,13 +191,15 @@ class Tracker(object):
 
       else:
         x1,y1,x2,y2 = bbox_to_corrdinate(self.current_target_state.search_box)
-        #cv2.rectangle(self.first_frame_image,(int(x1),int(y1)),(int(x2),int(y2)),(255,255,255),2)
+        cv2.rectangle(self.first_frame_image,(int(x1),int(y1)),(int(x2),int(y2)),(255,255,255),2)
         #cv2.imshow("Tracker",cv2.cvtColor(self.first_frame_image, cv2.COLOR_RGB2BGR))
+        #cv2.imshow("Target",self.first_frame_image)
+        #cv2.waitKey(100)
 
       reported_bbox = convert_bbox_format(self.current_target_state.target_box, 'top-left-based')
       reported_bboxs.append(reported_bbox)
 
     for key in cost_time_dict:
       cost_time_dict[key]/=len(frames)
-    print(cost_time_dict)
+    #print(cost_time_dict)
     return reported_bboxs

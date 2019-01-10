@@ -122,12 +122,15 @@ def main(model_config, train_config, track_config):
     # Save configurations for future reference
     save_cfgs(train_dir, model_config, train_config, track_config)
 
-    lr = _configure_learning_rate(train_config, global_step)
-
     if model_config.get('lr_warmup', False):
-      learning_rate = tf.cond(tf.less(global_step, int(train_config['train_data_config']['num_examples_per_epoch'])), lambda: lr/10.0, lambda: tf.identity(lr))
+      warmup_epoch_num = 10
+      init_lr_ratio = 0.5
+      warmup_steps = warmup_epoch_num * int(train_config['train_data_config']['num_examples_per_epoch'])//train_config['train_data_config']['batch_size']
+      inc_per_step = (1-init_lr_ratio)*train_config['lr_config']['initial_lr']/warmup_steps
+      warmup_lr = train_config['lr_config']['initial_lr']*init_lr_ratio + inc_per_step*tf.to_float(global_step)
+      learning_rate = tf.cond(tf.less(global_step, warmup_steps),lambda: tf.identity(warmup_lr), lambda: _configure_learning_rate(train_config, global_step-warmup_steps))
     else:
-      learning_rate = lr
+      learning_rate = _configure_learning_rate(train_config, global_step)
 
     optimizer = _configure_optimizer(train_config, learning_rate)
     tf.summary.scalar('learning_rate', learning_rate)
@@ -182,8 +185,8 @@ def main(model_config, train_config, track_config):
       sess.run(global_variables_init_op)
       sess.run(local_variables_init_op)
       start_step = 0
-      #if model_config['embed_config']['embedding_checkpoint_file']:
-      #  model.init_fn(sess)
+      if model_config['embed_config']['embedding_checkpoint_file']:
+        model.init_fn(sess)
     else:
       logging.info('Restore from last checkpoint: {}'.format(model_path))
       sess.run(local_variables_init_op)
@@ -205,7 +208,7 @@ def main(model_config, train_config, track_config):
     for step in range(start_step, total_steps):
       try: 
         start_time = time.time()
-        _, loss, batch_loss = sess.run([train_op, model.total_loss, model.batch_loss])
+        _, loss, batch_loss, current_lr= sess.run([train_op, model.total_loss, model.batch_loss, learning_rate])
         duration = time.time() - start_time
 
         if step % 10 == 0:
@@ -213,12 +216,12 @@ def main(model_config, train_config, track_config):
           time_remain = data_config['batch_size'] * (total_steps - step) / examples_per_sec
           m, s = divmod(time_remain, 60)
           h, m = divmod(m, 60)
-          format_str = ('%s: step %d, total loss = %.3f, batch loss = %.3f (%.1f examples/sec; %.3f '
+          format_str = ('%s: step %d,lr = %f, total loss = %.3f, batch loss = %.3f (%.1f examples/sec; %.3f '
                         'sec/batch; %dh:%02dm:%02ds remains)')
-          logging.info(format_str % (datetime.now(), step, loss, batch_loss,
+          logging.info(format_str % (datetime.now(), step, current_lr, loss, batch_loss,
                                      examples_per_sec, duration, h, m, s))
 
-        if step % 500 == 0:
+        if step % 200 == 0:
           summary_str = sess.run(summary_op)
           summary_writer.add_summary(summary_str, step)
 
