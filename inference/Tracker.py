@@ -26,7 +26,7 @@ class Tracker(object):
   step 1. use first frame to init the tracker
   step 2. tracke every frame based on the predicted location of previous frame
   """
-  def __init__(self, sess, model, track_config):
+  def __init__(self, sess, model, track_config, show_video=False):
     self.model = model
     self.sess = sess
     self.track_config = track_config
@@ -38,7 +38,7 @@ class Tracker(object):
     self.conf_threshold = 0.05
     self.image_use_rgb = True
     self.save_video=False
-    self.show_video=False
+    self.show_video=show_video
     self.auto_increase=False
 
   def track_init(self, first_bbox, first_frame_image_path):
