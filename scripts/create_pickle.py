@@ -33,16 +33,15 @@ class Dataset:
       num_videos = len(iter_videos)
       instance_videos = []
       for index in range(num_videos):
-        print('Processing {}/{}...'.format(iter_start + index, video_num))
         video_dir = iter_videos[index]
+        print('Processing {}/{}...{}'.format(iter_start + index, video_num,video_dir))
 
         instance_image_paths = glob.glob(video_dir + '/'  + '*.jpg')
 
-          # sort image paths by frame number
-        #instance_image_paths = sorted(instance_image_paths,cmp=cmp)
+        # sort image paths by frame number
         instance_image_paths = sorted(instance_image_paths,key=lambda x: int(x.split('/')[-1].split('.')[0]))
 
-          # get image absolute path
+        # get image absolute path
         instance_image_paths = [os.path.abspath(p) for p in instance_image_paths]
         instance_videos.append(instance_image_paths)
       data_iter.num_videos = len(instance_videos)
@@ -66,8 +65,8 @@ class Dataset:
 if __name__ == '__main__':
 
   parser = argparse.ArgumentParser()
-  parser.add_argument('--dataset_dir', type=str, nargs='?', default='dataset/TrackingNet_DET2014/raw_data')
-  parser.add_argument('--save_dir', type=str, nargs='?', default='dataset/TrackingNet_DET2014')
+  parser.add_argument('--dataset_dir', type=str, nargs='?', default='dataset/TrackingNet_VID_DET2014/raw_data')
+  parser.add_argument('--save_dir', type=str, nargs='?', default='dataset/TrackingNet_VID_DET2014')
   parser.add_argument('--validation_ratio', type=float, nargs='?', default=0.2)
 
   args = parser.parse_args()
