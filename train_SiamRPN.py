@@ -16,7 +16,9 @@ from configs import get_model,get_config
 
 from dataloader.DataLoader import DataLoader
 
-#config_name = "SiamRPN_bn_bz8_reg10"
+
+Debug=False
+
 config_name = input("Input config name : ")
 
 config = get_config(config_name)
@@ -122,9 +124,9 @@ def main(model_config, train_config, track_config):
     # Save configurations for future reference
     save_cfgs(train_dir, model_config, train_config, track_config)
 
-    if model_config.get('lr_warmup', False):
+    if train_config['lr_config'].get('lr_warmup', False):
       warmup_epoch_num = 10
-      init_lr_ratio = 0.5
+      init_lr_ratio = 0.8
       warmup_steps = warmup_epoch_num * int(train_config['train_data_config']['num_examples_per_epoch'])//train_config['train_data_config']['batch_size']
       inc_per_step = (1-init_lr_ratio)*train_config['lr_config']['initial_lr']/warmup_steps
       warmup_lr = train_config['lr_config']['initial_lr']*init_lr_ratio + inc_per_step*tf.to_float(global_step)
@@ -178,6 +180,13 @@ def main(model_config, train_config, track_config):
     sess_config = tf.ConfigProto(gpu_options=gpu_options, allow_soft_placement=True)
     #inter_op_parallelism_threads = 16, intra_op_parallelism_threads = 16, log_device_placement=True)
 
+    ######Debug timeline
+    if Debug:
+        from tensorflow.python.client import timeline
+        run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
+        run_metadata = tf.RunMetadata()
+    ######Debug timeline
+    
     sess = tf.Session(config=sess_config)
     model_path = tf.train.latest_checkpoint(train_config['train_dir'])
     
@@ -208,17 +217,25 @@ def main(model_config, train_config, track_config):
     for step in range(start_step, total_steps):
       try: 
         start_time = time.time()
-        _, loss, batch_loss, current_lr= sess.run([train_op, model.total_loss, model.batch_loss, learning_rate])
+        if Debug:
+            _, loss, batch_loss, current_lr= sess.run([train_op, model.total_loss, model.batch_loss, learning_rate],run_metadata=run_metadata,options=run_options)
+            t1 = timeline.Timeline(run_metadata.step_stats)
+            ctf = t1.generate_chrome_trace_format()
+            with open('timeline.json','w') as f:
+                f.write(ctf)
+        else:
+            _, loss, batch_loss, current_lr= sess.run([train_op, model.total_loss, model.batch_loss, learning_rate])
         duration = time.time() - start_time
-
+        
         if step % 10 == 0:
           examples_per_sec = data_config['batch_size'] / float(duration)
           time_remain = data_config['batch_size'] * (total_steps - step) / examples_per_sec
+          current_epoch = (step*data_config['batch_size'])//data_config['num_examples_per_epoch'] + 1
           m, s = divmod(time_remain, 60)
           h, m = divmod(m, 60)
-          format_str = ('%s: step %d,lr = %f, total loss = %.3f, batch loss = %.3f (%.1f examples/sec; %.3f '
+          format_str = ('%s: epoch %d-step %d,lr = %f, total loss = %.3f, batch loss = %.3f (%.1f examples/sec; %.3f '
                         'sec/batch; %dh:%02dm:%02ds remains)')
-          logging.info(format_str % (datetime.now(), step, current_lr, loss, batch_loss,
+          logging.info(format_str % (datetime.now(), current_epoch, step, current_lr, loss, batch_loss,
                                      examples_per_sec, duration, h, m, s))
 
         if step % 200 == 0:

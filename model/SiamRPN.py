@@ -15,6 +15,7 @@ class SiamRPN(Model):
                 examplars, instances, gt_examplar_boxes, gt_instance_boxes = self.inputs[0],self.inputs[1],self.inputs[2],self.inputs[3]
 
                 def single_img_gt(anchors_tf, gt_box):
+                    # TODO(jfxiong) convert get_rpn_label from numpy implementation to tensorflow 
                     return tf.py_func(get_rpn_label, [anchors_tf, tf.reshape(gt_box,[-1,4])],[tf.float32,tf.int32],name="single_img_gt")
 
                 gpu_list = self.train_config['%s_data_config'%(self.mode)].get('gpu_ids','0')
@@ -22,8 +23,7 @@ class SiamRPN(Model):
                 batch_size = self.train_config['%s_data_config'%(self.mode)]['batch_size'] // num_gpus
                 
                 bbox_gts, labels = tf.map_fn(lambda x: single_img_gt(x[0],x[1]),
-                    [tf.tile(self.anchors_tf,[batch_size,1,1]),gt_instance_boxes],
-                    dtype=[tf.float32, tf.int32])
+                [tf.tile(self.anchors_tf,[batch_size,1,1]),gt_instance_boxes],dtype=[tf.float32, tf.int32])
                 
                 bbox_gts.set_shape([batch_size,None,4])
                 labels.set_shape([batch_size,None])

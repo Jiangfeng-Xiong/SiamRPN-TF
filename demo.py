@@ -31,7 +31,7 @@ def get_topleft_bbox(region):
 if __name__ == "__main__":
   os.environ['CUDA_VISIBLE_DEVICES']=auto_select_gpu()
   
-  MODEL="SiamRPN_Base"
+  MODEL="SiamRPN"
   CHECKPOINT = "Logs/%s/track_model_checkpoints/%s"%(MODEL,MODEL)
 
   gpu_options = tf.GPUOptions(allow_growth=True)
@@ -46,7 +46,7 @@ if __name__ == "__main__":
     global_variables_init_op = tf.global_variables_initializer()
     sess.run(global_variables_init_op)
     model.restore_weights_from_checkpoint(sess)
-    tracker = Tracker(sess, model, track_config)
+    tracker = Tracker(sess, model, track_config, True)
 
    #2. load tracking video
     tracking_dir = "dataset/demo/bag"
@@ -59,7 +59,7 @@ if __name__ == "__main__":
       except:
         first_bbox = loadtxt(gt_file, delimiter=' ')[0]
 
-    first_bbox = get_axis_aligned_bbox(first_bbox)
+    first_bbox = get_topleft_bbox(first_bbox)
     frames = glob.glob(tracking_dir+"/img/*.jpg")
     frames.sort()
     print("Tracking Video Path: %s"%tracking_dir)

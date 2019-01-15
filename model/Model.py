@@ -17,21 +17,19 @@ class Model:
         self.train_config = train_config
         self.mode = mode
         assert mode in ['train', 'validation', 'inference']
-        
         ratios = [0.33, 0.5, 1.0, 2.0, 3.0]
         anchor_sizes = [64]
         self.embed_dim = 256
-
         self.anchor_nums_per_location = len(ratios) * len(anchor_sizes)
+        self.score_size = (model_config['x_image_size'] - model_config['z_image_size'])//model_config['embed_config']['stride'] + 1
         self.anchors = generate_anchor_all(base_size=model_config['embed_config']['stride'],
                                            ratios=ratios,
                                            anchor_sizes=anchor_sizes,
-                                           field_size=model_config['field_size'], net_shift=model_config['net_shift'])
-        self.anchors_tf = tf.reshape(tf.convert_to_tensor(self.anchors, tf.float32), [1, -1, 4])
-
-        config = self.model_config['embed_config']
-        self.arg_scope, self.backbone_fn = get_scope_and_backbone(config, self.is_training())
+                                           field_size=self.score_size, net_shift=model_config['net_shift'])
         
+        self.anchors_tf = tf.reshape(tf.convert_to_tensor(self.anchors, tf.float32), [1, -1, 4])
+        self.arg_scope,self.backbone_fn =  get_scope_and_backbone(self.model_config['embed_config'],self.is_training() )
+
         self.inputs=inputs
         self.examplars = None
         self.instances = None
@@ -73,9 +71,8 @@ class Model:
     def build_cls_branch(self, reuse):
         with tf.variable_scope('cls', reuse=reuse):
             with slim.arg_scope([slim.conv2d], activation_fn=None, normalizer_fn=None):
-                cls_feats_z = slim.conv2d(self.examplar_embeds, self.embed_dim * self.anchor_nums_per_location * 2, [3, 3],
-                                          padding='VALID')
-                cls_feats_x = slim.conv2d(self.instance_embeds, self.embed_dim , [3, 3], padding='VALID')
+                cls_feats_z = slim.conv2d(self.examplar_embeds, self.embed_dim * self.anchor_nums_per_location * 2, [3, 3], padding='VALID', scope="conv_cls1")
+                cls_feats_x = slim.conv2d(self.instance_embeds, self.embed_dim , [3, 3], padding='VALID', scope="conv_cls2")
             def _translation_match(x, z):
                 x = tf.expand_dims(x, 0)
                 filter_size = tf.shape(z)[0]
@@ -94,9 +91,8 @@ class Model:
     def build_reg_branch(self, reuse):
         with tf.variable_scope('regssion', reuse=reuse):
             with slim.arg_scope([slim.conv2d], activation_fn=None, normalizer_fn=None):
-                reg_feats_z = slim.conv2d(self.examplar_embeds, self.embed_dim * self.anchor_nums_per_location * 4, [3, 3],
-                                          padding='VALID')
-                reg_feats_x = slim.conv2d(self.instance_embeds, self.embed_dim, [3, 3], padding='VALID')
+                reg_feats_z = slim.conv2d(self.examplar_embeds, self.embed_dim * self.anchor_nums_per_location * 4, [3, 3], padding='VALID',scope='conv_r1')
+                reg_feats_x = slim.conv2d(self.instance_embeds, self.embed_dim, [3, 3], padding='VALID', scope='conv_r2')
 
                 def _translation_match(x, z):
                     x = tf.expand_dims(x, 0)
@@ -107,17 +103,13 @@ class Model:
                 self.pred_boxes = tf.map_fn(lambda x: _translation_match(x[0], x[1]),
                                     (reg_feats_x, reg_feats_z), dtype=reg_feats_x.dtype)
 
-                if self.model_config['adjust_regression']:
-                    batch_num = tf.shape(self.examplar_embeds)[0]
-                    feat_size = self.model_config["field_size"]
-                    feat_dim = self.anchor_nums_per_location * 4
-
-                    self.pred_boxes = tf.reshape(self.pred_boxes, [batch_num, feat_size, feat_size, feat_dim])
-                    self.pred_boxes = slim.conv2d(self.pred_boxes, self.anchor_nums_per_location * 4, [1, 1], padding='VALID')
-
-        num_of_anchors = self.anchor_nums_per_location *  self.model_config["field_size"] * self.model_config["field_size"]
+                batch_num = tf.shape(self.examplar_embeds)[0]
+                feat_dim = self.anchor_nums_per_location * 4
+                self.pred_boxes = tf.reshape(self.pred_boxes, [batch_num, self.score_size, self.score_size, feat_dim])
+                self.pred_boxes = slim.conv2d(self.pred_boxes, self.anchor_nums_per_location * 4, [1, 1], padding='VALID', scope='regress_adjust')
+                
+        num_of_anchors = self.anchor_nums_per_location * self.score_size * self.score_size
         self.pred_boxes = tf.reshape(self.pred_boxes, [-1, num_of_anchors, 4])  # N*Na*4
-
     def _build_rpn_loss(self):
         """
         self.labels: NxNa(Na=32*32*k)
