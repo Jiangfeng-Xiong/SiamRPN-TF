@@ -1,6 +1,7 @@
 import tensorflow as tf
 import numbers
 import cv2
+import numpy as np
 
 def RandomGray(img_sequence, gray_ratio = 0.25):
     def rgb_to_gray():
@@ -50,7 +51,8 @@ def RandomBlur(img, prob = 0.3):
     random_gaussain_blur = tf.random_uniform([], 0, 1, tf.float32, name = 'random_gaussain_blur')
     img_shape = tf.shape(img)
     def gaussian_blur(img):
-        return cv2.GaussianBlur(img, (5, 5), 0)
+        size = 2*np.random.randint(1,6)+1
+        return cv2.GaussianBlur(img, (size, size), 0)
     blur_img = tf.py_func(gaussian_blur, [img], [tf.uint8], name="blur_img")
     img = tf.cond(tf.less(random_gaussain_blur, prob), lambda: blur_img, lambda: img)
     img.set_shape([255,255,3])
@@ -58,7 +60,5 @@ def RandomBlur(img, prob = 0.3):
 
 def RandomFlip(img, prob = 0.3):
     random_flip_prob_lr = tf.random_uniform([], 0, 1, tf.float32, name = 'random_flip_prob_lr')
-    random_flip_prob_up = tf.random_uniform([], 0, 1, tf.float32, name = 'random_flip_prob_up')
     img = tf.cond(tf.less(random_flip_prob_lr, prob), lambda: tf.image.flip_left_right(img), lambda: img)
-    img = tf.cond(tf.less(random_flip_prob_up, prob), lambda: tf.image.flip_up_down(img), lambda: img)
     return img
