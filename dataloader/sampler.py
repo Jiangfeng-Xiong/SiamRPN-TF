@@ -60,6 +60,7 @@ class Sampler:
 
     videos = imdb['videos']
     self.time_steps = 2
+    self.video_image_ratio=10
     self.max_frame_dist = max_frame_dist
     
     # is use pesudo pairs with one image
@@ -90,11 +91,11 @@ class Sampler:
 
   def __getitem__(self, index):
     if self.is_with_image:
-      if index%2 == 0:
-        video_index = index//2
+      if (index%self.video_image_ratio) != 0:
+        video_index = (index//self.video_image_ratio)*self.video_image_ratio + (index-1)%(self.video_image_ratio)
         img_ids = self.videos[video_index % len(self.videos)]
       else:
-        pesudo_video_index = (index-1)//2
+        pesudo_video_index = index//self.video_image_ratio
         img_ids = self.pesudo_videos[pesudo_video_index % len(self.pesudo_videos)]
     else:
       img_ids = self.videos[index % len(self.videos)]
