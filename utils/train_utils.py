@@ -3,6 +3,7 @@ import tensorflow as tf
 import cv2
 from scipy import io as sio
 import re
+import pickle
 
 #draw top confident box during training
 def show_pred_bbox(imgs, Topk_bboxes, Topk_scores,gts=None):
@@ -54,6 +55,11 @@ def average_gradients(tower_grads):
 
 #load pretrained model for alexnet only
 def load_pickle_model(pickle_path='embeddings/pytorch_weights/siamrpn_model.pkl', scope='featureExtract_alexnet/'):
+  import os
+  if not os.path.exists(pickle_path):
+    print("%s not found, try to use absoult path"%(pickle_path))
+    return tf.no_op()
+
   f = open(pickle_path, 'rb')
   params = pickle.load(f,encoding="bytes")
   assign_ops = []
@@ -62,7 +68,7 @@ def load_pickle_model(pickle_path='embeddings/pytorch_weights/siamrpn_model.pkl'
     var_in_model = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES,scope + str(ref_name,encoding='utf-8'))
     if len(var_in_model)>0:
       var_in_mat = params[ref_name]
-      op = tf.assign(var_in_model, var_in_mat)
+      op = tf.assign(var_in_model[0], var_in_mat)
       assign_ops.append(op)
       print("sucess assign %s"%(scope + str(ref_name,encoding='utf-8')))
     else:
