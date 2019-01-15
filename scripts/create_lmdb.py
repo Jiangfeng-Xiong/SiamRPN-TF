@@ -9,8 +9,9 @@ from tqdm import tqdm
 encode = True
 
 
-def check_saved_video_index(videos,txn):
+def check_saved_video_indexs(videos,txn):
 	video_num = len(videos)
+	to_be_process_video_ids=[]
 	for i in range(video_num):
 		video_length = len(videos[i])
 		for j in range(video_length):
@@ -23,8 +24,10 @@ def check_saved_video_index(videos,txn):
 				if isinstance(image, type(None)):
 					continue
 				else:
-					return i
-	return video_num-1
+					to_be_process_video_ids.append(i)
+					print("add video index %d "%(i))
+					break
+	return to_be_process_video_ids
 
 def worker(videos):
 	kv = {}
@@ -42,14 +45,16 @@ def worker(videos):
 		kv[key] = image
 	return kv
 
-def preprocess_lmdb(input_pickles, output_file):
-	env = lmdb.open(output_file, map_size = 109951162777)
+def preprocess_lmdb(input_pickles, output_file, resume=False):
+	env = lmdb.open(output_file, map_size = 109951162777*3)
 	with open(input_pickles, 'rb') as f:
 		inputs = pickle.load(f)
 	videos = inputs['videos']
-	with env.begin() as temp:
-		last_index = check_saved_video_index(videos, temp)
-		videos = videos[last_index:]
+	if resume:
+		with env.begin() as temp:
+			to_be_process_video_ids = check_saved_video_indexs(videos, temp)
+			print("Total unsaved video num: %d"%(len(to_be_process_video_ids)))
+			videos = [videos[i] for i in to_be_process_video_ids]
 
 	with Pool(processes=32) as pool:
 		for ret in tqdm(pool.imap_unordered(functools.partial(worker), videos),total=len(videos)):
@@ -60,11 +65,12 @@ def preprocess_lmdb(input_pickles, output_file):
 
 if __name__ == '__main__':
   parser = argparse.ArgumentParser()  
-  parser.add_argument('--rootdir', type=str, nargs='?', default="LASOT_DET2014")
+  parser.add_argument('--rootdir', type=str, nargs='?', default="TrackingNet_VID_DET2014")
   parser.add_argument('--input', type=str, nargs='?', default='train.pickle')
   parser.add_argument('--output', type=str, nargs='?', default='train_lmdb_encode')
+  parser.add_argument('--resume', type=int, nargs='?', default=0)
   args = parser.parse_args()
   print("start processing with Encode: ", encode)
   input = "dataset/%s/%s"%(args.rootdir,args.input)
   output = "dataset/%s/%s"%(args.rootdir,args.output)
-  preprocess_lmdb(input, output)
+  preprocess_lmdb(input, output,args.resume)
