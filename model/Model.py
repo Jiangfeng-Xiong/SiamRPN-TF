@@ -5,7 +5,9 @@ import os
 slim = tf.contrib.slim
 
 from utils.model_utils import HannWindows,GaussianWindows
-from utils.bbox_transform_utils import bbox_transform_inv
+from utils.bbox_ops_utils import np_bbox_transform_inv
+from utils.tf_bbox_ops_utils import tf_iou
+
 from model.generate_anchors import generate_anchor_all
 from utils.train_utils import load_pickle_model
 from embeddings import get_scope_and_backbone
@@ -28,7 +30,13 @@ class Model:
                                            field_size=self.score_size, net_shift=model_config['net_shift'])
         
         self.anchors_tf = tf.reshape(tf.convert_to_tensor(self.anchors, tf.float32), [1, -1, 4])
-        self.arg_scope,self.backbone_fn =  get_scope_and_backbone(self.model_config['embed_config'],self.is_training() )
+        self.arg_scope,self.backbone_fn =  get_scope_and_backbone(self.model_config['embed_config'],self.is_training())
+        if mode in ['train', 'validation']:
+            gpu_list = self.train_config['%s_data_config'%(self.mode)].get('gpu_ids','0')
+            num_gpus = len(gpu_list.split(','))
+            self.batch_size = self.train_config['%s_data_config'%(self.mode)]['batch_size'] // num_gpus
+        else:
+            self.batch_size = 1
 
         self.inputs=inputs
         self.examplars = None
@@ -48,8 +56,8 @@ class Model:
 
             if self.mode in ['train', 'validation']:
                 self.get_topk_preds(top_num=1)
-                self.build_loss()
                 self.build_metric()
+                self.build_loss()
             else:
                 self.get_topk_preds(top_num=-1)
 
@@ -70,7 +78,7 @@ class Model:
         
     def build_cls_branch(self, reuse):
         with tf.variable_scope('cls', reuse=reuse):
-            with slim.arg_scope([slim.conv2d], activation_fn=None, normalizer_fn=None):
+            with slim.arg_scope([slim.conv2d], activation_fn=None, normalizer_fn=None,trainable=True):
                 cls_feats_z = slim.conv2d(self.examplar_embeds, self.embed_dim * self.anchor_nums_per_location * 2, [3, 3], padding='VALID', scope="conv_cls1")
                 cls_feats_x = slim.conv2d(self.instance_embeds, self.embed_dim , [3, 3], padding='VALID', scope="conv_cls2")
             def _translation_match(x, z):
@@ -90,7 +98,7 @@ class Model:
         
     def build_reg_branch(self, reuse):
         with tf.variable_scope('regssion', reuse=reuse):
-            with slim.arg_scope([slim.conv2d], activation_fn=None, normalizer_fn=None):
+            with slim.arg_scope([slim.conv2d], activation_fn=None, normalizer_fn=None,trainable=True):
                 reg_feats_z = slim.conv2d(self.examplar_embeds, self.embed_dim * self.anchor_nums_per_location * 4, [3, 3], padding='VALID',scope='conv_r1')
                 reg_feats_x = slim.conv2d(self.instance_embeds, self.embed_dim, [3, 3], padding='VALID', scope='conv_r2')
 
@@ -119,42 +127,58 @@ class Model:
         """
         with tf.name_scope('Loss'):
             valid_mask = tf.stop_gradient(tf.not_equal(self.labels, -1))  # N*Na
-
             valid_labels = tf.boolean_mask(self.labels, valid_mask)  # N*num_of_anchors_per_image(=64)
-            valid_labels = tf.to_float(tf.reshape(valid_labels, [-1]))
-            valid_labels = tf.stack([valid_labels, 1.0 - valid_labels], axis=1)  #[-1x2]
+            valid_labels = tf.reshape(valid_labels, [self.batch_size,-1])
+            
+            valid_labels_flatten_pos = tf.to_float(tf.reshape(valid_labels, [-1]))
+            valid_labels_flatten = tf.stack([valid_labels_flatten_pos, 1.0 - valid_labels_flatten_pos], axis=1)  #[-1x2]
 
             valid_pred_probs = tf.boolean_mask(self.pred_probs, valid_mask)
             valid_pred_probs = tf.reshape(valid_pred_probs, [-1, 2])
-            self.loss_cls = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=valid_labels, logits=valid_pred_probs))  # N*?*2
-
+            
             pos_mask = tf.stop_gradient(tf.equal(self.labels, 1))  # N*Na
             valid_bbox_gts = tf.boolean_mask(self.bbox_gts, pos_mask)
             valid_pred_boxes = tf.boolean_mask(self.pred_boxes, pos_mask)
+            
+            self.loss_cls = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=valid_labels_flatten, logits=valid_pred_probs))  # N*?*2
             self.loss_reg = tf.reduce_mean(tf.losses.huber_loss(labels=valid_bbox_gts, predictions=valid_pred_boxes))  # N*?*4
+            """
+            if self.train_config['%s_data_config'%(self.mode)].get('time_decay'):
+                weights = tf.exp(-tf.to_float(self.time_intervals)/100.0) #N
+                batch_num = tf.shape(self.time_intervals)[0]
+                cls_valid_anchor_num = tf.shape(valid_labels)[1]
+                reg_valid_anchor_num = tf.shape(valid_pred_boxes)[1]
+                
+                cls_weight = tf.reshape(tf.tile(tf.reshape(weights,[self.batch_size, 1]), [1,cls_valid_anchor_num], 'cls_weight'),[-1])
+                cls_weight = tf.to_float(self.batch_size*cls_valid_anchor_num)*cls_weight/tf.reduce_sum(cls_weight) #renormlize the weight
+                def get_pos_weights(weights, pos_masks):
+                    #weight(N) pos_mask(N*Npos)
+                    N = np.shape(pos_masks)[0]
+                    tiled_weights=[]
+                    for i in range(N):
+                        count = np.sum(pos_masks[i,:])
+                        tiled_weights = tiled_weights + [weights[i]]*count
+                    return np.array(tiled_weights, dtype=np.float32)
+                    
+                reg_weight = tf.py_func(get_pos_weights,[weights, pos_mask], tf.float32, name = "reg_weight")
+                reg_weight.set_shape([None])
+                
+                reg_weights = tf.to_float(tf.shape(reg_weight)[0]) * reg_weight/tf.reduce_sum(reg_weight)
+                reg_weights = tf.tile(tf.expand_dims(reg_weight,axis=1),[1,4])
+                
+                self.loss_cls = tf.reduce_mean(tf.losses.softmax_cross_entropy(onehot_labels=valid_labels_flatten, logits=valid_pred_probs, weights= cls_weight))
+                self.loss_reg = tf.reduce_mean(tf.losses.huber_loss(labels=valid_bbox_gts, predictions=valid_pred_boxes, weights= reg_weights))
+            else:
+                self.loss_cls = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=valid_labels_flatten, logits=valid_pred_probs))  # N*?*2
+                self.loss_reg = tf.reduce_mean(tf.losses.huber_loss(labels=valid_bbox_gts, predictions=valid_pred_boxes))  # N*?*4
+            """
 
     def build_loss(self):
         pass
 
     def build_metric(self):
-        def get_iou(boxes1, boxes2):
-            x11, y11, x12, y12 = tf.split(boxes1, 4, axis=1) #N*1
-            x21, y21, x22, y22 = tf.split(boxes2, 4, axis=1)
-
-            xA = tf.maximum(x11, x21)
-            yA = tf.maximum(y11, y21)
-            xB = tf.minimum(x12, x22)
-            yB = tf.minimum(y12, y22)
-
-            interArea = tf.maximum((xB - xA + 1), 0) * tf.maximum((yB-yA+1),0)
-
-            boxAArea = (x12 - x11+1)*(y12 - y11 +1)
-            boxBArea = (x22 - x21+1)*(y22 - y21 +1)
-
-            iou = tf.reduce_mean(interArea/(boxAArea + boxBArea - interArea))
-            return iou
-        iou = get_iou(tf.squeeze(self.topk_bboxes), self.gt_instance_boxes)
-        tf.summary.scalar('iou', iou, family=self.mode)        
+        self.iou = tf.reduce_mean(tf_iou(tf.squeeze(self.topk_bboxes), self.gt_instance_boxes))
+        tf.summary.scalar('iou', self.iou, family=self.mode)
 
     # Some commom help func
     def build_template(self):
@@ -171,16 +195,18 @@ class Model:
                 print("No checkpoint file found in: {}".format(checkpoint_path))
             else:
                 print("Loading model from checkpoint: %s" % checkpoint_path)
-                saver = tf.train.Saver()
-                saver.restore(sess, checkpoint_path)
+                #saver = tf.train.Saver()
+                #saver.restore(sess, checkpoint_path)
+                restore_op = tf.contrib.slim.assign_from_checkpoint_fn(checkpoint_path, tf.global_variables(), ignore_missing_vars=True)
+                restore_op(sess)
                 print("Successfully loaded checkpoint: %s" % os.path.basename(checkpoint_path))
         else:
             print("No checkpoint file found in: {}".format(checkpoint_path))
     def setup_embedding_init(self):
         embed_config = self.model_config['embed_config']
         if embed_config['embedding_checkpoint_file']:
-          initialize = load_pickle_model()
           def restore_fn(sess):
+            initialize = load_pickle_model()
             tf.logging.info("Restoring embedding variables from checkpoint file %s",
                             embed_config['embedding_checkpoint_file'])
             sess.run([initialize])
@@ -190,7 +216,7 @@ class Model:
         return self.mode == 'train'
 
     def get_topk_preds(self,top_num=1):
-        ori_pred_boxes = tf.py_func(bbox_transform_inv, [tf.reshape(tf.tile(self.anchors_tf,[tf.shape(self.pred_boxes)[0],1,1]),[-1,4]),
+        ori_pred_boxes = tf.py_func(np_bbox_transform_inv, [tf.reshape(tf.tile(self.anchors_tf,[tf.shape(self.pred_boxes)[0],1,1]),[-1,4]),
                                           tf.reshape(self.pred_boxes,[-1,4])],tf.float32)
         ori_pred_boxes = tf.reshape(ori_pred_boxes,tf.shape(self.pred_boxes))
 

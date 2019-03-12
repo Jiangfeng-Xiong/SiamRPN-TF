@@ -4,6 +4,7 @@ import sys
 import os.path as osp
 import random
 import time
+import traceback
 from datetime import datetime
 
 import numpy as np
@@ -142,11 +143,18 @@ def main(model_config, train_config, track_config):
                                                                  tf.split(train_inputs[1],num_gpus), \
                                                                  tf.split(train_inputs[2],num_gpus), \
                                                                  tf.split(train_inputs[3],num_gpus)
+                                                                 
+    if train_config['train_data_config'].get('time_decay', False):
+        time_intervals = tf.split(train_inputs[4],num_gpus)
+    
     tower_grads = []
     with tf.variable_scope(tf.get_variable_scope()):
       for i in range(num_gpus):
         with tf.device('/gpu:%d' % i):
-          inputs = [examplars[i], instances[i], gt_examplar_boxes[i], gt_instance_boxes[i]]
+          if train_config['train_data_config'].get('time_decay', False):
+            inputs = [examplars[i], instances[i], gt_examplar_boxes[i], gt_instance_boxes[i], time_intervals[i]]
+          else:
+            inputs = [examplars[i], instances[i], gt_examplar_boxes[i], gt_instance_boxes[i]]
           model = tower_model(Model, inputs, model_config, train_config, mode='train')
           # Reuse variables for the next tower.
           tf.get_variable_scope().reuse_variables()
@@ -196,6 +204,18 @@ def main(model_config, train_config, track_config):
       start_step = 0
       if model_config['embed_config']['embedding_checkpoint_file']:
         model.init_fn(sess)
+      elif model_config['finetuned_checkpoint_file']:
+          finetuned_checkpoint_file = tf.train.latest_checkpoint(model_config['finetuned_checkpoint_file'])
+          logging.info('Restore from last checkpoint: {}'.format(finetuned_checkpoint_file))
+          sess.run(local_variables_init_op)
+          sess.run(global_variables_init_op)
+          restore_op = tf.contrib.slim.assign_from_checkpoint_fn(finetuned_checkpoint_file, tf.global_variables(), ignore_missing_vars=True)
+          restore_op(sess)
+          #reset global step saved in checkpoint
+          global_step_reset_op = global_step.assign(0)
+          sess.run(global_step_reset_op)
+          start_step = tf.train.global_step(sess, global_step.name) + 1
+      
     else:
       logging.info('Restore from last checkpoint: {}'.format(model_path))
       sess.run(local_variables_init_op)
@@ -203,8 +223,7 @@ def main(model_config, train_config, track_config):
       #saver.restore(sess, model_path)
       restore_op = tf.contrib.slim.assign_from_checkpoint_fn(model_path, tf.global_variables(), ignore_missing_vars=True)
       restore_op(sess)
-      start_step = tf.train.global_step(sess, global_step.name) + 1
-
+  
     print_trainable(sess) #help function, can be disenable
     g.finalize()  # Finalize graph to avoid adding ops by mistake
 
@@ -251,4 +270,5 @@ def main(model_config, train_config, track_config):
           print("save model.ckpt-%d"%(step))
           break
       except:
+        print(traceback.format_exc())
         print("Error found in current step, continue")

@@ -74,25 +74,43 @@ def featureExtract_alexnet_arg_scope(embed_config,
       with slim.arg_scope([slim.batch_norm], is_training=is_model_training) as arg_sc:
         return arg_sc
 
+def get_fixed_bn_config():
+    batch_norm_params = {
+      "scale": True,
+      # Decay for the moving averages.
+      "decay": 0.95,
+      # Epsilon to prevent 0s in variance.
+      "epsilon": 1e-6,
+      "trainable": False,
+      "is_training": False,
+      # Collection containing the moving mean and moving variance.
+      "variables_collections": {
+        "beta": None,
+        "gamma": None,
+        "moving_mean": ["moving_vars"],
+        "moving_variance": ["moving_vars"],
+      },
+      'updates_collections': None,  # Ensure that updates are done within a frame
+    }
+    return batch_norm_params
 
-def featureExtract_alexnet(inputs, reuse=None, scope='featureExtract_alexnet'):
+def featureExtract_alexnet_fixedconv3(inputs, reuse=None, scope='featureExtract_alexnet'):
   with tf.variable_scope(scope, 'featureExtract_alexnet', [inputs], reuse=reuse) as sc:
     end_points_collection = sc.name + '_end_points'
     with slim.arg_scope([slim.conv2d, slim.max_pool2d,slim.batch_norm],
                         outputs_collections=end_points_collection):
-      net = inputs #255/127
-      net = slim.conv2d(net, 96, [11, 11], 2, scope='conv1')#123/59
-      net = slim.batch_norm(net, scope='bn1')
-      net = slim.max_pool2d(net, [3, 3], 2, scope='pool1') #61/29
-      
-      net = tf.nn.relu(net)
-      net = slim.conv2d(net, 256, [5, 5], scope='conv2') #57/25
-      net = slim.batch_norm(net, scope='bn2')
-      net = slim.max_pool2d(net, [3, 3], 2, scope='pool2') #28/12
-      
-      net = tf.nn.relu(net)
-      net = slim.conv2d(net, 384, [3, 3], 1, scope='conv3')#26/10
-      net = slim.batch_norm(net, scope='bn3')
+      with slim.arg_scope([slim.batch_norm], **get_fixed_bn_config()):
+          net = inputs #255/127
+          net = slim.conv2d(net, 96, [11, 11], 2, scope='conv1',trainable=False)#123/59
+          net = slim.batch_norm(net, scope='bn1')
+          net = slim.max_pool2d(net, [3, 3], 2, scope='pool1') #61/29
+          net = tf.nn.relu(net)
+          net = slim.conv2d(net, 256, [5, 5], scope='conv2',trainable=False) #57/25
+          net = slim.batch_norm(net, scope='bn2')
+          net = slim.max_pool2d(net, [3, 3], 2, scope='pool2') #28/12
+          net = tf.nn.relu(net)
+          net = slim.conv2d(net, 384, [3, 3], 1, scope='conv3',trainable=False)#26/10
+          net = slim.batch_norm(net, scope='bn3')
       
       net = tf.nn.relu(net)
       net = slim.conv2d(net, 384, [3, 3], 1, scope='conv4')#24/8

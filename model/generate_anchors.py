@@ -2,14 +2,13 @@
 generate anchor boxes
 """
 import numpy as np
-
+#import tensorflow as tf
 import os,sys
 CURRENT_DIR = os.path.dirname(__file__)
 sys.path.append(os.path.join(CURRENT_DIR, '..'))
 
-from utils.bbox_ops_utils import iou as np_iou
-from utils.bbox_transform_utils import bbox_transform as bbox_transform
-
+from utils.bbox_ops_utils import np_iou,np_bbox_transform
+from utils.tf_bbox_ops_utils import tf_iou,tf_bbox_transform
 
 anchor_config={'POS_ANCHOR_THRESHOLD': 0.6, 
                    'NEG_ANCHOR_THRESHOLD': 0.3, 
@@ -75,12 +74,6 @@ def get_rpn_label(anchors, gt_bboxes):
     Label each anchor as +1(pos), -1(ignore), 0 
     anchor: Na(=N*N*K)*4, N*N is feature map size, K=len(scales)*len(ratios)
     gt_bboxes: Ng*4 (for SiameseRPN, we have unique bounding box, i.e. Ng=1)
-    anchor_config: 
-    example
-        anchor_config={'POS_ANCHOR_THRESHOLD': 0.6, 
-                       'NEG_ANCHOR_THRESHOLD': 0.3, 
-                       'MAX_POS_NUM': 16,
-                       'BATCH_PER_IMAGE': 64}
     """
     def filter_box_label(labels, value, max_example_num):
         """filter out max_exmaple_num in the original anchors, set pos/neg anchor to be ignored(-1)
@@ -119,11 +112,15 @@ def get_rpn_label(anchors, gt_bboxes):
     pos_boxes = gt_bboxes[iou_argmax_per_anchor[pos_inds],:]
     anchor_boxes[pos_inds,:] = pos_boxes
 
-    target_boxes = bbox_transform(anchors, anchor_boxes)
+    target_boxes = np_bbox_transform(anchors, anchor_boxes)
 
     #print("%s in line %d: finally get %d pos anchors, %d neg anchors for this image"%(__file__, sys._getframe().f_lineno,
     #                        len(pos_inds),len(neg_inds))) 
     return target_boxes, anchor_labels
+
+def tf_get_rpn_label(anchors, gt_bboxes):
+    #TODO(jfxiong)
+    print("tf_get_rpn_label is Not Implemented yet")
 
 ###############help function######################
 def _anchor_to_bbox(anchor):

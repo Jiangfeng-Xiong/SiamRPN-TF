@@ -7,31 +7,35 @@ from utils.train_utils import show_pred_bbox
 from utils.model_utils import BinWindows
 from model.generate_anchors import get_rpn_label
 from model.Model import Model
+from dataloader.data_augmentation import RandomMixUp
+
 
 class SiamRPN(Model):
     def build_inputs(self):
         if len(self.inputs) > 0:
             with tf.device("/cpu:0"):  
                 examplars, instances, gt_examplar_boxes, gt_instance_boxes = self.inputs[0],self.inputs[1],self.inputs[2],self.inputs[3]
-
+                if self.train_config['%s_data_config'%(self.mode)].get('time_decay'):
+                    self.time_intervals = self.inputs[4]
+                    self.time_intervals.set_shape([self.batch_size])
                 def single_img_gt(anchors_tf, gt_box):
                     # TODO(jfxiong) convert get_rpn_label from numpy implementation to tensorflow 
                     return tf.py_func(get_rpn_label, [anchors_tf, tf.reshape(gt_box,[-1,4])],[tf.float32,tf.int32],name="single_img_gt")
 
-                gpu_list = self.train_config['%s_data_config'%(self.mode)].get('gpu_ids','0')
-                num_gpus = len(gpu_list.split(','))
-                batch_size = self.train_config['%s_data_config'%(self.mode)]['batch_size'] // num_gpus
-                
-                bbox_gts, labels = tf.map_fn(lambda x: single_img_gt(x[0],x[1]),
-                [tf.tile(self.anchors_tf,[batch_size,1,1]),gt_instance_boxes],dtype=[tf.float32, tf.int32])
-                
-                bbox_gts.set_shape([batch_size,None,4])
-                labels.set_shape([batch_size,None])
-                examplars.set_shape([batch_size, self.model_config['z_image_size'], self.model_config['z_image_size'], 3])
-                instances.set_shape([batch_size, self.model_config['x_image_size'], self.model_config['x_image_size'], 3])
+
+                bbox_gts, labels = tf.map_fn(lambda x: single_img_gt(x[0],x[1]),[tf.tile(self.anchors_tf,[self.batch_size,1,1]),gt_instance_boxes],dtype=[tf.float32, tf.int32])
+
+                bbox_gts.set_shape([self.batch_size,None,4])
+                labels.set_shape([self.batch_size,None])
+                examplars.set_shape([self.batch_size, self.model_config['z_image_size'], self.model_config['z_image_size'], 3])
+                instances.set_shape([self.batch_size, self.model_config['x_image_size'], self.model_config['x_image_size'], 3])
 
                 examplars = tf.to_float(examplars)
                 instances = tf.to_float(instances)
+                
+                
+                if self.train_config['%s_data_config'%(self.mode)].get('RandomMixUp', False):
+                    instances = RandomMixUp(instances)
                 self.bbox_gts, self.labels = bbox_gts, labels
                 self.gt_instance_boxes = gt_instance_boxes
                 self.gt_examplar_boxes = gt_examplar_boxes
@@ -42,6 +46,9 @@ class SiamRPN(Model):
             self.instance_feed = tf.placeholder(shape=[1, self.model_config['x_image_size'], self.model_config['x_image_size'], 3],
                                             dtype=tf.uint8,
                                             name='instance_input')
+            self.gt_examplar_boxes = tf.placeholder(shape=[1, 4],
+                                            dtype=tf.float32,
+                                            name='gt_examplar_boxes')
             examplars = tf.to_float(self.examplar_feed)
             instances = tf.to_float(self.instance_feed)
 
