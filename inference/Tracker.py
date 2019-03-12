@@ -65,16 +65,16 @@ class Tracker(object):
       print("save video into %s"%(video_path))
       self.video = cv2.VideoWriter(video_path, fourcc, 30, (self.img_width,self.img_height))
 
-    def center_crop(img):
+    def center_crop(img, crop_size=127):
       img_shape = np.shape(img)
       center_y = (img_shape[0]-1)//2
       center_x = (img_shape[1]-1)//2
-      h = img_shape[0]//2
-      w = img_shape[1]//2
+      h = crop_size
+      w = crop_size
       croped_img = img[center_y-h//2:center_y+h//2+1, center_x-w//2:center_x+w//2+1]
-      assert(croped_img.shape[0]==img_shape[0]//2)
+      assert(croped_img.shape[0]==crop_size)
       return croped_img
-    self.first_image_examplar = center_crop(first_image_crop)
+    self.first_image_examplar = center_crop(first_image_crop, self.z_image_size)
 
     shift_y = (self.x_image_size - self.z_image_size)//2
     shift_x = shift_y
@@ -82,7 +82,7 @@ class Tracker(object):
     y1 = gt_examplar_box[1] - shift_y
     x2 = gt_examplar_box[2] - shift_x
     y2 = gt_examplar_box[3] - shift_y
-    self.gt_examplar_box = np.reshape(np.array([x1, y1 ,x2 ,y2]),[1,4])
+    self.gt_examplar_boxes = np.reshape(np.array([x1, y1 ,x2 ,y2]),[1,4])
 
     self.current_target_state = TargetState(bbox=self.first_bbox)
     self.window = np.tile(np.outer(np.hanning(self.score_size), np.hanning(self.score_size)).flatten(),5) #5 is the number of aspect ratio anchors
@@ -111,17 +111,26 @@ class Tracker(object):
         cost_time_dict['crop_img'] += crop_img_end - crop_img_start
 
         sess_run_start = time.time()
-        boxes,scores = self.sess.run([self.model.topk_bboxes, self.model.topk_scores],
-                              feed_dict={self.model.examplar_feed: examplar ,
-                                         self.model.instance_feed: instance})
+        if self.model.model_config.get('BinWindow',False):
+            boxes,scores = self.sess.run([self.model.topk_bboxes, self.model.topk_scores],
+                                  feed_dict={self.model.examplar_feed: examplar ,
+                                             self.model.instance_feed: instance,
+                                             self.model.gt_examplar_boxes: self.gt_examplar_boxes})
+        else:
+            boxes,scores = self.sess.run([self.model.topk_bboxes, self.model.topk_scores],
+                                  feed_dict={self.model.examplar_feed: examplar ,
+                                             self.model.instance_feed: instance})
         sess_run_end = time.time()
         cost_time_dict['sess_run'] += sess_run_end - sess_run_start
 
         post_process_start = time.time()
+        def padded_size(w, h):
+            context = 0.5 * (w + h)
+            return np.sqrt((w + context) * (h + context))
         #boxes: 1*NA*4 score: 1*Na
         boxes = boxes[0] #NA*4
         scores = scores[0] #NA*2
-        scales = np.sqrt((boxes[:,2] - boxes[:,0])*(boxes[:,3]-boxes[:,1]))/scale_x #Na
+        scales = padded_size((boxes[:,2] - boxes[:,0])/scale_x,(boxes[:,3]-boxes[:,1])/scale_x) #Na
         ratios = (boxes[:,3]-boxes[:,1])/(boxes[:,2] - boxes[:,0])
 
         scale_change = scales/self.current_target_state.scale
@@ -159,7 +168,7 @@ class Tracker(object):
         new_search_w = max(10.0,min(self.current_target_state.target_box.width * (1.0-alpha) + alpha*w, self.img_width))
         new_search_h = max(10.0,min(self.current_target_state.target_box.height * (1.0-alpha) + alpha*h, self.img_height))
         self.current_target_state.target_box = Rectangle(new_search_cx,new_search_cy,new_search_w,new_search_h)
-        self.current_target_state.scale = np.sqrt(new_search_w*new_search_h)
+        self.current_target_state.scale = padded_size(new_search_w, new_search_h)
         self.current_target_state.ratio = new_search_h*1.0/new_search_w
         
         #auto increase the search region if max score is lower than the conf_threshold

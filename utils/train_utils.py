@@ -82,17 +82,17 @@ def load_pickle_model(pickle_path='embeddings/pytorch_weights/siamrpn_model.pkl'
     _assign(b'bn%d/moving_mean' % l, params)
     _assign(b'bn%d/moving_variance' % l, params)
 
-  _assign(b'conv_r1/weights',params, 'regssion/')
-  _assign(b'conv_r1/biases',params, 'regssion/')
-  _assign(b'conv_r2/weights',params, 'regssion/')
-  _assign(b'conv_r2/biases',params, 'regssion/')
-  _assign(b'regress_adjust/weights',params, 'regssion/')
-  _assign(b'regress_adjust/biases',params, 'regssion/')
+  #_assign(b'conv_r1/weights',params, 'regssion/')
+  #_assign(b'conv_r1/biases',params, 'regssion/')
+  #_assign(b'conv_r2/weights',params, 'regssion/')
+  #_assign(b'conv_r2/biases',params, 'regssion/')
+  #_assign(b'regress_adjust/weights',params, 'regssion/')
+  #_assign(b'regress_adjust/biases',params, 'regssion/')
       
-  _assign(b'conv_cls1/weights',params, 'cls/')
-  _assign(b'conv_cls1/biases',params, 'cls/')
-  _assign(b'conv_cls2/weights',params, 'cls/')
-  _assign(b'conv_cls2/biases',params, 'cls/')
+  #_assign(b'conv_cls1/weights',params, 'cls/')
+  #_assign(b'conv_cls1/biases',params, 'cls/')
+  #_assign(b'conv_cls2/weights',params, 'cls/')
+  #_assign(b'conv_cls2/biases',params, 'cls/')
 
 
   initialize = tf.group(*assign_ops)

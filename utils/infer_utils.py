@@ -26,10 +26,10 @@ def corrdinate_to_bbox(corrdinates):
 def bbox_to_corrdinate(bbox):
   #Center cx,cy
   x, y, target_width, target_height = bbox.x, bbox.y, bbox.width, bbox.height
-  x1 = x - target_width/2.0
-  y1 = y - target_height/2.0
-  x2 = x + target_width/2.0
-  y2 = y + target_height/2.0
+  x1 = x - (target_width-1)/2.0
+  y1 = y - (target_height-1)/2.0
+  x2 = x + (target_width-1)/2.0
+  y2 = y + (target_height-1)/2.0
 
   return x1,y1,x2,y2
 
@@ -150,3 +150,56 @@ def get_subwindow_avg(im, pos, model_sz, original_sz):
   else:
     im_patch = im_patch_original
   return im_patch, left_pad, top_pad, right_pad, bottom_pad
+  
+def overlap(box1, box2):
+    assert(np.shape(box1) == np.shape(box2))
+    x11, y11, x12, y12 = np.split(box1, 4, axis=1)
+    x21, y21, x22, y22 = np.split(box2, 4, axis=1)
+
+    xA = np.maximum(x11, x21)
+    yA = np.maximum(y11, y21)
+    xB = np.minimum(x12, x22)
+    yB = np.minimum(y12, y22)
+
+    interArea = np.maximum((xB - xA + 1), 0) * np.maximum((yB-yA+1),0)
+
+    boxAArea = (x12 - x11+1)*(y12 - y11 +1)
+    boxBArea = (x22 - x21+1)*(y22 - y21 +1)
+    UnionArea = boxAArea + boxBArea - interArea
+    iou = interArea*1.0/UnionArea
+    return iou
+def NMS(dets, scores, conf_th=0.4, overlap_th=0.3):  
+    order = scores.argsort()[::-1]  
+    keep_indexs = []  
+    while order.size > 0:  
+        i = order[0]
+        if scores[i] > conf_th or len(keep_indexs)==0:
+            keep_indexs.append(i)
+        if order.size == 1: break
+        ovr = overlap(np.tile(np.reshape(dets[i],[1,4]),(order.size-1,1)), dets[order[1:]])
+        inds = np.where(ovr <= overlap_th)[0]
+        order = order[inds+1]
+    return keep_indexs
+    
+def get_topleft_bbox(region):
+    region = np.array(region)
+    cx = np.mean(region[0::2])
+    cy = np.mean(region[1::2])
+    x1 = min(region[0::2])
+    x2 = max(region[0::2])
+    y1 = min(region[1::2])
+    y2 = max(region[1::2])
+    A1 = np.linalg.norm(region[0:2] - region[2:4]) * np.linalg.norm(region[2:4] - region[4:6])
+    A2 = (x2 - x1) * (y2 - y1)
+    s = np.sqrt(A1 / A2)
+    w = s * (x2 - x1) + 1
+    h = s * (y2 - y1) + 1
+    return [cx-(w-1)//2, cy-(h-1)//2, w, h]
+
+#===================================IO Help function
+def safe_imread(filename):
+    bgr_img = cv2.imread(filename)
+    while isinstance(bgr_img, type(None)):
+        print("load %s failed, reload"%(filename))
+        bgr_img = cv2.imread(filename)
+    return bgr_img
