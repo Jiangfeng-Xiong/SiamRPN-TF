@@ -54,21 +54,19 @@ def upsample(n_in, n_out):
 
 
 class Sampler:
-  def __init__(self, imdb_path, max_frame_dist, epoch_size=None):
+  def __init__(self, imdb_path, max_frame_dist, is_training=False, epoch_size=None):
     with open(imdb_path, 'rb') as f:
       imdb = pickle.load(f)
 
     videos = imdb['videos']
     self.time_steps = 2
-    self.video_image_ratio=10
+    self.video_image_ratio=8
     self.max_frame_dist = max_frame_dist
+    self.random_swap_pair = is_training
+    self.random_choose_video = True
+    self.epoch_index = 0
+    self.sample_video_id_dcit={}
     
-    # is use pesudo pairs with one image
-    self.is_with_image = False
-    for i in range(len(videos)):
-      if len(videos[i]) == 1:
-        self.is_with_image = True
-        break
     #split videos into two parts
     pesudo_video_index = []
     video_index = []
@@ -83,22 +81,45 @@ class Sampler:
     self.videos = [videos[j] for j in video_index]
     self.pesudo_videos = [videos[j] for j in pesudo_video_index]
     print("found %s with %d videos and %d pesudo videos and empty_folder %d"%(imdb_path, len(self.videos), len(self.pesudo_videos), empty_folder_num))
+    
+    # is use pesudo pairs with one image
+    self.is_with_image = False
+    if len(self.pesudo_videos)>1000:
+        self.is_with_image = True
 
     if epoch_size is None:
       self.epoch_size = len(self.videos)
     else:
       self.epoch_size = int(epoch_size)
-
+      
+  def random_video_ids(self):
+    index = np.random.choice(len(self.videos))
+    if len(self.sample_video_id_dcit) == len(self.videos):
+        self.epoch_index = self.epoch_index + 1
+        print("Iterate all videos %d times"%(self.epoch_index))
+        self.sample_video_id_dcit={}
+    elif index not in self.sample_video_id_dcit:
+        self.sample_video_id_dcit[index]=True
+    else:
+        while (index in self.sample_video_id_dcit):
+            index = (index + 1)% len(self.videos)
+        self.sample_video_id_dcit[index]=True
+    img_ids = self.videos[index % len(self.videos)]
+    return img_ids
+    
   def __getitem__(self, index):
     if self.is_with_image:
       if (index%self.video_image_ratio) != 0:
-        video_index = (index//self.video_image_ratio)*self.video_image_ratio + (index-1)%(self.video_image_ratio)
-        img_ids = self.videos[video_index % len(self.videos)]
+        #video_index = (index//self.video_image_ratio)*self.video_image_ratio + (index-1)%(self.video_image_ratio)
+        img_ids = self.random_video_ids()
       else:
-        pesudo_video_index = index//self.video_image_ratio
-        img_ids = self.pesudo_videos[pesudo_video_index % len(self.pesudo_videos)]
+        pesudo_video_index = np.random.choice(len(self.pesudo_videos))
+        img_ids = self.pesudo_videos[pesudo_video_index]
     else:
-      img_ids = self.videos[index % len(self.videos)]
+      if self.random_choose_video:
+        img_ids = self.random_video_ids()
+      else:
+        img_ids = self.videos[index % len(self.videos)]
 
     n_frames = len(img_ids)
     #come across empty dir
@@ -113,6 +134,10 @@ class Sampler:
     for j, frame_idx in enumerate(out_idxs):
       img_path = img_ids[frame_idx]
       video.append(img_path.encode('utf-8'))
+      
+    if self.random_swap_pair and np.random.uniform(0,1.0) > 0.5:
+        video = video[::-1]
+      
     return video
 
   def __len__(self):

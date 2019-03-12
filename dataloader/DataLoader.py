@@ -16,7 +16,7 @@ class DataLoader(object):
     self.is_training = is_training
     self.examplar_size = 127
     self.instance_size = 255
-    self.dataset_py = Sampler(config['input_imdb'], config['max_frame_dist'])
+    self.dataset_py = Sampler(config['input_imdb'], config['max_frame_dist'], is_training)
     
     #shuffle = False if self.config.get('lmdb_path', None) else is_training
     self.sampler = ShuffleSample(self.dataset_py, shuffle=is_training)
@@ -87,7 +87,7 @@ class DataLoader(object):
             img_size = int(np.sqrt(len(img_buffer)/3))
             image = np.reshape(img_buffer, [img_size, img_size, 3])
         return image
-       
+
       if self.config.get('lmdb_path', None):
         exemplar_image = tf.py_func(get_bytes_from_lmdb, [img_paths[0]], tf.uint8, name = "exemplar_image")
         instance_image = tf.py_func(get_bytes_from_lmdb, [img_paths[1]], tf.uint8, name = "instance_image")
@@ -97,21 +97,22 @@ class DataLoader(object):
         exemplar_image = tf.image.decode_jpeg(examplar_file, channels=3, dct_method="INTEGER_ACCURATE")
         instance_image = tf.image.decode_jpeg(instance_file, channels=3, dct_method="INTEGER_ACCURATE")
 
-      def get_gt_box(bytes):
+      def get_file_info(bytes):
         string = str(bytes, encoding="utf-8")
         string = string.split('/')[-1]
+        frame_id = np.int32(string.split('.')[0])
         #print(string)
         w = int(string.split('.')[2]) #1.w.100.h.100.jpg
         h = int(string.split('.')[4])
         cx = (self.instance_size-1)/2.0
         cy = (self.instance_size-1)/2.0
         box = np.array([cx - w/2.0, cy - h/2.0, cx + w/2.0, cy + h/2.0],np.float32)
-        return box
+        return box, frame_id
 
-      gt_instance_box = tf.py_func(get_gt_box, [img_paths[1]], tf.float32,name="gt_instance_box")
+      gt_instance_box,instance_frame_id = tf.py_func(get_file_info, [img_paths[1]], [tf.float32, tf.int32],name="gt_instance_box")
       gt_instance_box.set_shape([4])
 
-      gt_examplar_box = tf.py_func(get_gt_box, [img_paths[0]], tf.float32,name="gt_examplar_box")
+      gt_examplar_box,examplar_frame_id = tf.py_func(get_file_info, [img_paths[0]], [tf.float32, tf.int32],name="gt_examplar_box")
       gt_examplar_box.set_shape([4])
 
       video = tf.stack([exemplar_image, instance_image])
@@ -122,14 +123,21 @@ class DataLoader(object):
 
       exemplar_image,gt_examplar_box = self.examplar_transform(exemplar_image, gt_examplar_box)
       instance_image,gt_instance_box = self.instance_transform(instance_image, gt_instance_box)
+      
+      if self.config.get('time_decay', False):
+        time_interval = tf.abs(instance_frame_id - examplar_frame_id)
+        return exemplar_image, instance_image, gt_examplar_box, gt_instance_box, time_interval
+      else:
+        return exemplar_image, instance_image, gt_examplar_box, gt_instance_box
 
-      return exemplar_image, instance_image, gt_examplar_box, gt_instance_box
 
     dataset = tf.data.Dataset.from_generator(sample_generator,
                                              output_types=(tf.string),
                                              output_shapes=(tf.TensorShape([2])))
     dataset = dataset.map(transform_fn, num_parallel_calls=self.config['prefetch_threads'])
     dataset = dataset.prefetch(self.config['prefetch_capacity'])
+    
+    #dataset = dataset.shuffle(buffer_size=1000)
     dataset = dataset.repeat()
     dataset = dataset.batch(self.config['batch_size'])
     self.dataset_tf = dataset
@@ -144,13 +152,14 @@ if __name__ == "__main__":
 
   import cv2
   config={}
-  config['input_imdb']="dataset/LASOT_DET2014/train.pickle"
+  config['input_imdb']="dataset/TrackingNet_VID_DET2014/train.pickle"
   config['max_frame_dist']=100
   config['prefetch_threads'] = 8
   config['prefetch_capacity'] = 8
   config['batch_size'] = 1
-  config['lmdb_path'] = 'dataset/LASOT_DET2014/train_lmdb_encode'
+  config['lmdb_path'] = 'dataset/TrackingNet_VID_DET2014/train_lmdb_encode'
   config['lmdb_encode'] = True
+  config['time_decay'] = True
   
   os.environ['CUDA_VISIBLE_DEVICES']=""
 
@@ -160,15 +169,17 @@ if __name__ == "__main__":
     with tf.Session() as sess:
       while True:
         batch = sess.run(test_loader.get_one_batch())
-
-        assert(len(batch) == 4) #exemplar_image, instance_image, gt_examplar_box, gt_instance_box
+        assert(len(batch) == 5) #exemplar_image, instance_image, gt_examplar_box, gt_instance_box, time_interval
         instance = np.uint8(batch[1][0])
         examplar = np.uint8(batch[0][0])
+        
         try: 
           cv2.rectangle(examplar, (batch[2][0][0],batch[2][0][1]),(batch[2][0][2],batch[2][0][3]),(0,255,0),3)
           cv2.rectangle(instance, (batch[3][0][0],batch[3][0][1]),(batch[3][0][2],batch[3][0][3]),(0,255,0),3)
           cv2.imshow("examplar", examplar)
           cv2.imshow("instance", instance)
+          time_interval = np.int32(batch[4])
+          print("time_interval: %d"%(time_interval))
           cv2.waitKey(0)
         except:
           print(np.shape(examplar), np.shape(instance))

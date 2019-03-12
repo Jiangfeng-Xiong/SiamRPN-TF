@@ -65,9 +65,9 @@ class Dataset:
 if __name__ == '__main__':
 
   parser = argparse.ArgumentParser()
-  parser.add_argument('--dataset_dir', type=str, nargs='?', default='dataset/TrackingNet_VID_DET2014/raw_data')
-  parser.add_argument('--save_dir', type=str, nargs='?', default='dataset/TrackingNet_VID_DET2014')
-  parser.add_argument('--validation_ratio', type=float, nargs='?', default=0.2)
+  parser.add_argument('--dataset_dir', type=str, nargs='?', default='dataset/DET2014_VID2015_LASOT_GOT10k/raw_data')
+  parser.add_argument('--save_dir', type=str, nargs='?', default='dataset/DET2014_VID2015_LASOT_GOT10k')
+  parser.add_argument('--validation_ratio', type=float, nargs='?', default=0.0)
 
   args = parser.parse_args()
   dataset = Dataset(args)
@@ -86,17 +86,20 @@ if __name__ == '__main__':
     validation_imdb['videos'] += data_iter.instance_videos
   validation_imdb['n_videos'] = len(validation_imdb['videos'])
   validation_imdb['image_shape'] = (255, 255, 3)
-  with open(os.path.join(args.save_dir,'validation.pickle'), 'wb') as f:
-    pickle.dump(validation_imdb, f)
+  if num_validation>0:
+    with open(os.path.join(args.save_dir,'validation.pickle'), 'wb') as f:
+        pickle.dump(validation_imdb, f)
 
 
   ### train
-  train_dirs = all_video_dirs[num_validation:]
-  train_imdb = dict()
-  train_imdb['videos'] = []
-  for i, data_iter in enumerate(dataset.dataset_iterator(train_dirs)):
-    train_imdb['videos'] += data_iter.instance_videos
-  train_imdb['n_videos'] = len(train_imdb['videos'])
-  train_imdb['image_shape'] = (255, 255, 3)
-  with open(os.path.join(args.save_dir, 'train.pickle'), 'wb') as f:
-    pickle.dump(train_imdb, f)
+  num_train = int(len(all_video_dirs) * (1-args.validation_ratio))
+  if num_train>0:
+      train_dirs = all_video_dirs[num_validation:]
+      train_imdb = dict()
+      train_imdb['videos'] = []
+      for i, data_iter in enumerate(dataset.dataset_iterator(train_dirs)):
+        train_imdb['videos'] += data_iter.instance_videos
+      train_imdb['n_videos'] = len(train_imdb['videos'])
+      train_imdb['image_shape'] = (255, 255, 3)
+      with open(os.path.join(args.save_dir, 'train.pickle'), 'wb') as f:
+        pickle.dump(train_imdb, f)

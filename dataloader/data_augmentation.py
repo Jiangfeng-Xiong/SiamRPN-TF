@@ -62,3 +62,14 @@ def RandomFlip(img, prob = 0.3):
     random_flip_prob_lr = tf.random_uniform([], 0, 1, tf.float32, name = 'random_flip_prob_lr')
     img = tf.cond(tf.less(random_flip_prob_lr, prob), lambda: tf.image.flip_left_right(img), lambda: img)
     return img
+    
+def RandomMixUp(imgs):
+    def mixedup(imgs):
+        batch_size = tf.shape(imgs)[0] # batch size must be even
+        random_mixup_rate = tf.random_uniform([batch_size, 1, 1, 1], 0.4, 1.0, tf.float32, name = 'random_mixup_rate')
+        # repeat the latest half
+        tiled_imgs = tf.tile(imgs[batch_size//2:], [2,1,1,1])
+        mixedup_imgs = random_mixup_rate * imgs + (1.0 - random_mixup_rate)*tiled_imgs
+        return mixedup_imgs
+    mixedup_imgs = mixedup(imgs)
+    return mixedup_imgs

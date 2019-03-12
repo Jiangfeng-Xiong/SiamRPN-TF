@@ -47,8 +47,12 @@ def worker(videos):
 
 def preprocess_lmdb(input_pickles, output_file, resume=False):
 	env = lmdb.open(output_file, map_size = 109951162777*3)
-	with open(input_pickles, 'rb') as f:
-		inputs = pickle.load(f)
+	try: 
+		with open(input_pickles, 'rb') as f:
+			inputs = pickle.load(f)
+	except:
+		pass
+		return
 	videos = inputs['videos']
 	if resume:
 		with env.begin() as temp:
@@ -65,12 +69,13 @@ def preprocess_lmdb(input_pickles, output_file, resume=False):
 
 if __name__ == '__main__':
   parser = argparse.ArgumentParser()  
-  parser.add_argument('--rootdir', type=str, nargs='?', default="TrackingNet_VID_DET2014")
-  parser.add_argument('--input', type=str, nargs='?', default='train.pickle')
-  parser.add_argument('--output', type=str, nargs='?', default='train_lmdb_encode')
+  parser.add_argument('--rootdir', type=str, nargs='?', default="DET2014_VID2015_LASOT_GOT10k")
   parser.add_argument('--resume', type=int, nargs='?', default=0)
   args = parser.parse_args()
   print("start processing with Encode: ", encode)
-  input = "dataset/%s/%s"%(args.rootdir,args.input)
-  output = "dataset/%s/%s"%(args.rootdir,args.output)
-  preprocess_lmdb(input, output,args.resume)
+  
+  print("Creating train_lmdb")
+  preprocess_lmdb("dataset/%s/%s"%(args.rootdir,"train.pickle"), "dataset/%s/%s"%(args.rootdir,"train_lmdb_encode"),args.resume)
+
+  #print("Creating validation_lmdb")
+  #preprocess_lmdb("dataset/%s/%s"%(args.rootdir,"validation.pickle"), "dataset/%s/%s"%(args.rootdir,"validation_lmdb"),args.resume)
