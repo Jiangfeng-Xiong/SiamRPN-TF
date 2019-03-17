@@ -214,8 +214,6 @@ def main(model_config, train_config, track_config):
           #reset global step saved in checkpoint
           global_step_reset_op = global_step.assign(0)
           sess.run(global_step_reset_op)
-          start_step = tf.train.global_step(sess, global_step.name) + 1
-      
     else:
       logging.info('Restore from last checkpoint: {}'.format(model_path))
       sess.run(local_variables_init_op)
@@ -223,7 +221,8 @@ def main(model_config, train_config, track_config):
       #saver.restore(sess, model_path)
       restore_op = tf.contrib.slim.assign_from_checkpoint_fn(model_path, tf.global_variables(), ignore_missing_vars=True)
       restore_op(sess)
-  
+      
+    start_step = tf.train.global_step(sess, global_step.name) + 1
     print_trainable(sess) #help function, can be disenable
     g.finalize()  # Finalize graph to avoid adding ops by mistake
 
