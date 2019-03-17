@@ -73,3 +73,15 @@ def RandomMixUp(imgs):
         return mixedup_imgs
     mixedup_imgs = mixedup(imgs)
     return mixedup_imgs
+def RandomDownsample(imgs, img_size, prob = 0.3):
+    def downsample(imgs,img_size):
+        #!Note only work when w==h since function resize_images(width first) and tf.shape(height first)
+        downsample_rate = tf.random_uniform([], 1/8.0, 1/4.0, tf.float32, name = 'downsample_rate')
+        downsample_size= tf.cast(img_size*downsample_rate,tf.int32)
+        imgs_down = tf.image.resize_images(imgs, [downsample_size, downsample_size], method=tf.image.ResizeMethod.BILINEAR)
+        imgs_up = tf.image.resize_images(imgs_down, [img_size, img_size], method=tf.image.ResizeMethod.BILINEAR)
+        return imgs_up
+    random_downsample = tf.random_uniform([], 0, 1, tf.float32, name = 'random_downsample')
+    downsample_imgs = tf.cond(tf.less(random_downsample, prob), lambda: downsample(imgs,img_size), lambda: tf.cast(imgs,tf.float32))
+    return downsample_imgs
+    

@@ -7,7 +7,7 @@ CURRENT_DIR = os.path.dirname(__file__)
 sys.path.append(os.path.join(CURRENT_DIR, '..'))
 
 from dataloader.sampler import Sampler,ShuffleSample
-from dataloader.data_augmentation import RandomGray,RandomStretch,CenterCrop,RandomCrop,RandomColorAug,RandomFlip,RandomBlur
+from dataloader.data_augmentation import RandomGray,RandomStretch,CenterCrop,RandomCrop,RandomColorAug,RandomFlip,RandomBlur,RandomDownsample
 
 ##########DataLoader
 class DataLoader(object):
@@ -117,12 +117,18 @@ class DataLoader(object):
 
       video = tf.stack([exemplar_image, instance_image])
       video = RandomGray(video)
+      
 
       exemplar_image = video[0]
       instance_image = video[1]
-
+      
+      
       exemplar_image,gt_examplar_box = self.examplar_transform(exemplar_image, gt_examplar_box)
       instance_image,gt_instance_box = self.instance_transform(instance_image, gt_instance_box)
+      
+      if self.config.get('random_downsample',False):
+        exemplar_image = RandomDownsample(exemplar_image, self.examplar_size)
+        instance_image = RandomDownsample(instance_image, self.instance_size)      
       
       if self.config.get('time_decay', False):
         time_interval = tf.abs(instance_frame_id - examplar_frame_id)
