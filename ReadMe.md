@@ -28,7 +28,7 @@ Add more details ... (TODO)
 * [ ] To speed up training by replace tf.py_func & numpy  operation with pure tf implementation 
 * [x] Multi-GPU Training & load dataset with lmdb [lmdb dataset download(about 120G)  code: dn58](https://pan.baidu.com/s/1vhx-G_ctqsxtglwFAu9qNQ)
 * [x] Convert [pytorch pretrained model](https://pan.baidu.com/s/1OTseQUknI6EgXddcPt8s6A#list/path=%2F) to initialize embedding function
-* [x] leaning rate warmup
+* [x] learning rate warmup
 * [x] Train network with static images and dynamic videos
 * [x] Add time decay option to weight loss[3] (a slight improvement)
 * [x] Add random Mixup[2]
