@@ -35,7 +35,7 @@ class SiamRPN(Model):
                 
                 
                 if self.train_config['%s_data_config'%(self.mode)].get('RandomMixUp', False):
-                    instances = RandomMixUp(instances)
+                    instances,self.random_mixup_rate = RandomMixUp(instances)
                 self.bbox_gts, self.labels = bbox_gts, labels
                 self.gt_instance_boxes = gt_instance_boxes
                 self.gt_examplar_boxes = gt_examplar_boxes
@@ -62,14 +62,11 @@ class SiamRPN(Model):
             self.instances = self.instances - tf.reshape([123.68, 116.779, 103.939],[1,1,1,3])
             self.instances = self.instances/tf.reshape([58.393, 57.12, 57.375],[1,1,1,3])
 
-        if self.model_config.get('BinWindow',False):
-            self.examplars = BinWindows(self.examplars, self.gt_examplar_boxes)
-
     def build_loss(self):
         self._build_rpn_loss()
         with tf.name_scope('Loss'):
-            self.batch_loss = self.loss_cls + self.loss_reg*self.model_config['regloss_lambda']
-            tf.losses.add_loss(self.batch_loss)
+            self.batch_loss = self.loss_cls + self.loss_reg
+            #tf.losses.add_loss(self.batch_loss)
             self.total_loss = tf.losses.get_total_loss()
             mean_total_loss, update_op = tf.metrics.mean(self.total_loss)
             with tf.control_dependencies([update_op]):
