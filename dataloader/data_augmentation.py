@@ -64,15 +64,11 @@ def RandomFlip(img, prob = 0.3):
     return img
     
 def RandomMixUp(imgs):
-    def mixedup(imgs):
-        batch_size = tf.shape(imgs)[0] # batch size must be even
-        random_mixup_rate = tf.random_uniform([batch_size, 1, 1, 1], 0.4, 1.0, tf.float32, name = 'random_mixup_rate')
-        # repeat the latest half
-        tiled_imgs = tf.tile(imgs[batch_size//2:], [2,1,1,1])
-        mixedup_imgs = random_mixup_rate * imgs + (1.0 - random_mixup_rate)*tiled_imgs
-        return mixedup_imgs
-    mixedup_imgs = mixedup(imgs)
-    return mixedup_imgs
+    batch_size = tf.shape(imgs)[0] # batch size must be even
+    random_mixup_rate = tf.random_uniform([batch_size, 1, 1, 1], 0.3, 1.5, tf.float32, name = 'random_mixup_rate')
+    random_mixup_rate = tf.minimum(random_mixup_rate, 1.0)        
+    mixedup_imgs = random_mixup_rate*imgs + (1.0-random_mixup_rate)*tf.reverse(imgs, axis=[0])
+    return mixedup_imgs,tf.reshape(random_mixup_rate,[-1])
 def RandomDownsample(imgs, img_size, prob = 0.3):
     def downsample(imgs,img_size):
         #!Note only work when w==h since function resize_images(width first) and tf.shape(height first)
