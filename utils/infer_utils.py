@@ -1,10 +1,18 @@
 import collections
 import numpy as np
 import cv2 
-
+import copy
 
 Rectangle = collections.namedtuple('Rectangle', ['x', 'y', 'width', 'height'])
 
+
+class TargetState(object):
+  def __init__(self, bbox):
+    self.search_box = bbox #(cx, cy, w, h) in the original image
+    self.target_box = bbox
+    self.scale = np.sqrt(bbox.width*bbox.height)
+    self.ratio = bbox.height*1.0/bbox.width
+    
 def get_center(x):
   return (x - 1.) / 2.
 
@@ -168,7 +176,7 @@ def overlap(box1, box2):
     UnionArea = boxAArea + boxBArea - interArea
     iou = interArea*1.0/UnionArea
     return iou
-def NMS(dets, scores, conf_th=0.4, overlap_th=0.3):  
+def NMS(dets, scores, conf_th=0.4, overlap_th=0.1):  
     order = scores.argsort()[::-1]  
     keep_indexs = []  
     while order.size > 0:  
@@ -196,10 +204,32 @@ def get_topleft_bbox(region):
     h = s * (y2 - y1) + 1
     return [cx-(w-1)//2, cy-(h-1)//2, w, h]
 
-#===================================IO Help function
+#===================================Help function
 def safe_imread(filename):
     bgr_img = cv2.imread(filename)
     while isinstance(bgr_img, type(None)):
         print("load %s failed, reload"%(filename))
         bgr_img = cv2.imread(filename)
     return bgr_img
+    
+def vis_square(data_raw, name="fig"):
+    """Take an array of shape (n, height, width) or (n, height, width, 3)
+       and visualize each (height, width) thing in a grid of size approx. sqrt(n) by sqrt(n)"""
+    # normalize data for display
+    data = copy.copy(data_raw)
+    data = (data - data.min()) / (data.max() - data.min())
+    # force the number of filters to be square
+    n = int(np.ceil(np.sqrt(data.shape[0])))
+    padding = (((0, n ** 2 - data.shape[0]),
+               (0, 1), (0, 1))                 # add some space between filters
+               + ((0, 0),) * (data.ndim - 3))  # don't pad the last dimension (if there is one)
+    data = np.pad(data, padding, mode='constant', constant_values=1)  # pad with ones (white)
+    # tile the filters into an image
+    data = data.reshape((n, n) + data.shape[1:]).transpose((0, 2, 1, 3) + tuple(range(4, data.ndim + 1)))
+    data = data.reshape((n * data.shape[1], n * data.shape[3]) + data.shape[4:])
+    
+    data = cv2.applyColorMap((255*data).astype(np.uint8), cv2.COLORMAP_JET) if np.shape(data)[-1] !=3 else data
+    data = cv2.resize(data, (256,256)) if np.shape(data)[0]< 256 else data
+    
+    cv2.imshow(name, data)
+    cv2.waitKey(1)
