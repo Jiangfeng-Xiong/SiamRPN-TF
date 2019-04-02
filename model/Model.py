@@ -120,7 +120,7 @@ class Model:
         self.pred_boxes = tf.reshape(self.pred_boxes, [-1, num_of_anchors, 4])  # N*Na*4
     def _build_rpn_loss(self):
         """
-        self.labels: NxNa(Na=32*32*k)
+        self.labels: NxNa(Na=17*17*k)
         self.pred_anchors: Nx32x32x4k
         self.pred_prob: Nx32x32x2k
         self.bbox_gts: NxNax4
@@ -130,48 +130,32 @@ class Model:
             valid_labels = tf.boolean_mask(self.labels, valid_mask)  # N*num_of_anchors_per_image(=64)
             valid_labels = tf.reshape(valid_labels, [self.batch_size,-1])
             
+            is_label_mixup = self.train_config['%s_data_config'%(self.mode)].get('label_mixup', False)
+            if self.train_config['%s_data_config'%(self.mode)].get('RandomMixUp', False) and is_label_mixup:
+                valid_labels = tf.to_float(valid_labels)*tf.reshape(self.random_mixup_rate,[-1,1])
+            
             valid_labels_flatten_pos = tf.to_float(tf.reshape(valid_labels, [-1]))
-            valid_labels_flatten = tf.stack([valid_labels_flatten_pos, 1.0 - valid_labels_flatten_pos], axis=1)  #[-1x2]
+            valid_labels_flatten = tf.stack([valid_labels_flatten_pos, 1.0 - valid_labels_flatten_pos], axis=1)
 
             valid_pred_probs = tf.boolean_mask(self.pred_probs, valid_mask)
             valid_pred_probs = tf.reshape(valid_pred_probs, [-1, 2])
-            
             pos_mask = tf.stop_gradient(tf.equal(self.labels, 1))  # N*Na
             valid_bbox_gts = tf.boolean_mask(self.bbox_gts, pos_mask)
             valid_pred_boxes = tf.boolean_mask(self.pred_boxes, pos_mask)
-            
-            self.loss_cls = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=valid_labels_flatten, logits=valid_pred_probs))  # N*?*2
-            self.loss_reg = tf.reduce_mean(tf.losses.huber_loss(labels=valid_bbox_gts, predictions=valid_pred_boxes))  # N*?*4
-            """
+           
             if self.train_config['%s_data_config'%(self.mode)].get('time_decay'):
-                weights = tf.exp(-tf.to_float(self.time_intervals)/100.0) #N
-                batch_num = tf.shape(self.time_intervals)[0]
-                cls_valid_anchor_num = tf.shape(valid_labels)[1]
-                reg_valid_anchor_num = tf.shape(valid_pred_boxes)[1]
-                
-                cls_weight = tf.reshape(tf.tile(tf.reshape(weights,[self.batch_size, 1]), [1,cls_valid_anchor_num], 'cls_weight'),[-1])
-                cls_weight = tf.to_float(self.batch_size*cls_valid_anchor_num)*cls_weight/tf.reduce_sum(cls_weight) #renormlize the weight
-                def get_pos_weights(weights, pos_masks):
-                    #weight(N) pos_mask(N*Npos)
-                    N = np.shape(pos_masks)[0]
-                    tiled_weights=[]
-                    for i in range(N):
-                        count = np.sum(pos_masks[i,:])
-                        tiled_weights = tiled_weights + [weights[i]]*count
-                    return np.array(tiled_weights, dtype=np.float32)
-                    
-                reg_weight = tf.py_func(get_pos_weights,[weights, pos_mask], tf.float32, name = "reg_weight")
-                reg_weight.set_shape([None])
-                
-                reg_weights = tf.to_float(tf.shape(reg_weight)[0]) * reg_weight/tf.reduce_sum(reg_weight)
-                reg_weights = tf.tile(tf.expand_dims(reg_weight,axis=1),[1,4])
-                
-                self.loss_cls = tf.reduce_mean(tf.losses.softmax_cross_entropy(onehot_labels=valid_labels_flatten, logits=valid_pred_probs, weights= cls_weight))
-                self.loss_reg = tf.reduce_mean(tf.losses.huber_loss(labels=valid_bbox_gts, predictions=valid_pred_boxes, weights= reg_weights))
+                loss_weights = tf.exp(-tf.to_float(self.time_intervals)/100.0) #N
             else:
-                self.loss_cls = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=valid_labels_flatten, logits=valid_pred_probs))  # N*?*2
-                self.loss_reg = tf.reduce_mean(tf.losses.huber_loss(labels=valid_bbox_gts, predictions=valid_pred_boxes))  # N*?*4
-            """
+                loss_weights = tf.ones([tf.shape(self.labels)[0]])
+            is_weighted_mixup = self.train_config['%s_data_config'%(self.mode)].get('weighted_mixup', False)
+            if self.train_config['%s_data_config'%(self.mode)].get('RandomMixUp', False) and is_weighted_mixup:
+                loss_weights = self.random_mixup_rate*loss_weights
+                
+            Na = tf.shape(self.labels)[1]
+            cls_weight = tf.boolean_mask(tf.tile(tf.reshape(loss_weights,[-1, 1]), [1,Na]), valid_mask)
+            reg_weight = tf.boolean_mask(tf.tile(tf.reshape(loss_weights,[-1, 1, 1]), [1,Na,4]), pos_mask)
+            self.loss_cls = tf.reduce_mean(tf.losses.softmax_cross_entropy(onehot_labels=valid_labels_flatten, logits=valid_pred_probs,weights=cls_weight))
+            self.loss_reg = tf.reduce_mean(tf.losses.huber_loss(labels=valid_bbox_gts, predictions=valid_pred_boxes,weights=reg_weight*self.model_config['regloss_lambda']))
 
     def build_loss(self):
         pass
