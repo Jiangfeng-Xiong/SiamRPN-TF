@@ -126,8 +126,8 @@ def main(model_config, train_config, track_config):
     save_cfgs(train_dir, model_config, train_config, track_config)
 
     if train_config['lr_config'].get('lr_warmup', False):
-      warmup_epoch_num = 10
-      init_lr_ratio = 0.8
+      warmup_epoch_num = train_config['lr_config']['warmup_epoch_num']
+      init_lr_ratio = 0.01
       warmup_steps = warmup_epoch_num * int(train_config['train_data_config']['num_examples_per_epoch'])//train_config['train_data_config']['batch_size']
       inc_per_step = (1-init_lr_ratio)*train_config['lr_config']['initial_lr']/warmup_steps
       warmup_lr = train_config['lr_config']['initial_lr']*init_lr_ratio + inc_per_step*tf.to_float(global_step)
