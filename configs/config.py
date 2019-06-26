@@ -11,6 +11,7 @@ embedding_checkpoint_file=None
 LOG_DIR = "Logs/%s"%(RUN_NAME)
 regloss_lambda = 10.0
 time_decay = True
+RandomMixUp=False
 
 MODEL_CONFIG = {
   'z_image_size': 127,  # Exemplar image size
@@ -36,21 +37,21 @@ MODEL_CONFIG = {
 TRAIN_CONFIG = {
   'train_dir': osp.join(LOG_DIR, 'track_model_checkpoints', RUN_NAME),
   'seed': 123,  # fix seed for reproducing experiments
-  'train_data_config': {'input_imdb': 'dataset/DET2014_VID2015_LASOT_GOT10k/train.pickle',
-						'lmdb_path': 'dataset/DET2014_VID2015_LASOT_GOT10k/train_lmdb_encode',
+  'train_data_config': {'input_imdb': 'dataset/YB/train.pickle',
+						#'lmdb_path': 'dataset/YB/train_lmdb_encode',
 						'lmdb_encode': True,
                         'time_decay':time_decay,
                         'num_examples_per_epoch': 2e5, #
                         'epoch': 200,
                         'batch_size':batch_size,
-                        'max_frame_dist': 100,  # Maximum distance between any two random frames draw from videos.
+                        'max_frame_dist': 1000,  # Maximum distance between any two random frames draw from videos.
                         'prefetch_threads': 16,
-                        'prefetch_capacity': 50 * batch_size,# The maximum elements number in the data loading queue
+                        'prefetch_capacity': 10 * batch_size,# The maximum elements number in the data loading queue
                         'augmentation_config':{'random_flip': True, 'random_color': True,'random_blur': True, 'random_downsample': False},
-                        'RandomMixUp': True
+                        'RandomMixUp': RandomMixUp
                         },  
-  'validation_data_config': {'input_imdb': 'dataset/GOT10k/validation.pickle',
-							'lmdb_path': 'dataset/GOT10k/validation_lmdb_encode',
+  'validation_data_config': {'input_imdb': 'dataset/YB/train.pickle',
+							#'lmdb_path': 'dataset/YB/validation_lmdb_encode',
 							'lmdb_encode': True,
                             'time_decay': False,
                              'batch_size': 64,
